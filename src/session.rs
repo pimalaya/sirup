@@ -1,9 +1,12 @@
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::{
     fs,
     io::{self, Read, Write},
-    os::unix::net::{UnixListener, UnixStream},
     time::Duration,
 };
+#[cfg(windows)]
+use uds_windows::{UnixListener, UnixStream};
 
 use anyhow::{bail, Result};
 use io_imap::{

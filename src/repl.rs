@@ -1,7 +1,8 @@
-use std::{
-    io::{self, Read, Write},
-    os::unix::net::UnixStream,
-};
+use std::io::{self, Read, Write};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(windows)]
+use uds_windows::UnixStream;
 
 use anyhow::Result;
 use io_imap::{

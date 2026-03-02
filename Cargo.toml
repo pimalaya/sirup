@@ -34,6 +34,9 @@ rustls-platform-verifier = { version = "0.6", optional = true }
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 
+[target.'cfg(windows)'.dependencies]
+uds_windows = "1"
+
 [patch.crates-io]
 io-imap = { git = "https://github.com/pimalaya/io-imap", branch = "io" }
 io-stream.git = "https://github.com/pimalaya/io-stream"
