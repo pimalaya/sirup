@@ -7,9 +7,10 @@ host = "localhost"
 # port = 993
 
 # tls.disable = false
-# tls.provider = "rustls-ring"
+# tls.provider = "rustls"
+# tls.rustls.crypto = "ring"
 # starttls = false
 
 sasl.mechanisms = ["plain", "login"]
 sasl.login.username = "example@localhost"
-sasl.login.password.raw = "password"
+sasl.login.password.raw = "example"

@@ -13,8 +13,10 @@ repository = "https://github.com/pimalaya/sirup"
 
 [features]
 default = ["rustls-ring"]
-rustls-aws = ["rustls/aws-lc-rs"]
-rustls-ring = ["rustls/ring"]
+native-tls = ["dep:native-tls"]
+rustls = ["rustls-aws", "rustls-ring"]
+rustls-aws = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/aws-lc-rs"]
+rustls-ring = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/ring"]
 
 [build-dependencies]
 pimalaya-toolbox = { version = "0.0.4", default-features = false, features = ["build"] }
@@ -26,9 +28,10 @@ dirs = "6"
 io-imap = { version = "0.0.1", default-features = false }
 io-stream = { version = "0.0.2", features = ["std"] }
 log = "0.4"
+native-tls = { version = "0.2", optional = true }
 pimalaya-toolbox = { version = "0.0.4", default-features = false, features = ["config", "terminal", "secret", "command"] }
-rustls = { version = "0.23", default-features = false }
-rustls-platform-verifier = "0.6"
+rustls = { version = "0.23", default-features = false, optional = true }
+rustls-platform-verifier = { version = "0.6", optional = true }
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 

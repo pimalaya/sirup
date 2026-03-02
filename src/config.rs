@@ -33,7 +33,6 @@ fn default_socks_dir() -> PathBuf {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AccountConfig {
     pub sock_file: Option<PathBuf>,
-
     pub host: String,
     pub port: Option<u16>,
     #[serde(default)]
@@ -49,7 +48,30 @@ pub struct AccountConfig {
 pub struct TlsConfig {
     #[serde(default)]
     pub disable: bool,
+    pub provider: Option<TlsProviderConfig>,
+    #[serde(default)]
+    pub rustls: RustlsConfig,
     pub cert: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum TlsProviderConfig {
+    Rustls,
+    NativeTls,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RustlsConfig {
+    pub crypto: Option<RustlsCryptoConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RustlsCryptoConfig {
+    Aws,
+    Ring,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

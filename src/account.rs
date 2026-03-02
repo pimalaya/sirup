@@ -2,9 +2,13 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use log::warn;
+#[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
+use rustls::crypto::CryptoProvider;
 use secrecy::SecretString;
 
-use crate::config::{AccountConfig, Config, SaslMechanismConfig};
+use crate::config::{
+    AccountConfig, Config, RustlsCryptoConfig, SaslMechanismConfig, TlsProviderConfig,
+};
 
 #[derive(Clone, Debug)]
 pub struct Account {
@@ -38,9 +42,69 @@ impl Account {
         let tls = if account_config.tls.disable {
             Tls::None
         } else {
-            Tls::Rustls {
-                starttls: account_config.starttls,
-                cert: account_config.tls.cert,
+            let provider = account_config.tls.provider.unwrap_or({
+                #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
+                { TlsProviderConfig::Rustls }
+                #[cfg(all(feature = "native-tls", not(feature = "rustls-aws"), not(feature = "rustls-ring")))]
+                { TlsProviderConfig::NativeTls }
+                #[cfg(not(any(feature = "native-tls", feature = "rustls-aws", feature = "rustls-ring")))]
+                anyhow::bail!("no TLS provider available: enable the `native-tls`, `rustls-ring`, or `rustls-aws` feature")
+            });
+
+            match provider {
+                TlsProviderConfig::Rustls => {
+                    #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
+                    {
+                        let crypto = account_config.tls.rustls.crypto.unwrap_or({
+                            #[cfg(feature = "rustls-ring")]
+                            {
+                                RustlsCryptoConfig::Ring
+                            }
+                            #[cfg(all(feature = "rustls-aws", not(feature = "rustls-ring")))]
+                            {
+                                RustlsCryptoConfig::Aws
+                            }
+                        });
+                        let provider = match crypto {
+                            RustlsCryptoConfig::Ring => {
+                                #[cfg(feature = "rustls-ring")]
+                                {
+                                    rustls::crypto::ring::default_provider()
+                                }
+                                #[cfg(not(feature = "rustls-ring"))]
+                                anyhow::bail!("rustls crypto provider `ring` requires the `rustls-ring` feature")
+                            }
+                            RustlsCryptoConfig::Aws => {
+                                #[cfg(feature = "rustls-aws")]
+                                {
+                                    rustls::crypto::aws_lc_rs::default_provider()
+                                }
+                                #[cfg(not(feature = "rustls-aws"))]
+                                anyhow::bail!("rustls crypto provider `aws` requires the `rustls-aws` feature")
+                            }
+                        };
+                        Tls::Rustls {
+                            starttls: account_config.starttls,
+                            cert: account_config.tls.cert,
+                            provider,
+                        }
+                    }
+                    #[cfg(not(any(feature = "rustls-aws", feature = "rustls-ring")))]
+                    anyhow::bail!(
+                        "TLS provider `rustls` requires the `rustls-ring` or `rustls-aws` feature"
+                    )
+                }
+                TlsProviderConfig::NativeTls => {
+                    #[cfg(feature = "native-tls")]
+                    {
+                        Tls::NativeTls {
+                            starttls: account_config.starttls,
+                            cert: account_config.tls.cert,
+                        }
+                    }
+                    #[cfg(not(feature = "native-tls"))]
+                    anyhow::bail!("TLS provider `native-tls` requires the `native-tls` feature")
+                }
             }
         };
 
@@ -97,7 +161,14 @@ impl Account {
 #[derive(Clone, Debug)]
 pub enum Tls {
     None,
+    #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
     Rustls {
+        starttls: bool,
+        cert: Option<PathBuf>,
+        provider: CryptoProvider,
+    },
+    #[cfg(feature = "native-tls")]
+    NativeTls {
         starttls: bool,
         cert: Option<PathBuf>,
     },

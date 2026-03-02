@@ -109,8 +109,21 @@ pub fn start(mut account: Account) -> Result<()> {
 fn connect(account: &Account) -> Result<(ImapContext, Stream)> {
     match &account.tls {
         Tls::None => stream::tcp(&account.host, account.port),
-        Tls::Rustls { starttls, cert } => {
-            stream::rustls(&account.host, account.port, *starttls, cert.as_deref())
+        #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
+        Tls::Rustls {
+            starttls,
+            cert,
+            provider,
+        } => stream::rustls(
+            &account.host,
+            account.port,
+            *starttls,
+            cert.as_deref(),
+            provider.clone(),
+        ),
+        #[cfg(feature = "native-tls")]
+        Tls::NativeTls { starttls, cert } => {
+            stream::native_tls(&account.host, account.port, *starttls, cert.as_deref())
         }
     }
 }
