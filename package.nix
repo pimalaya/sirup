@@ -21,16 +21,8 @@ let
   hash = "";
   cargoHash = "";
 
-  inherit (stdenv.hostPlatform)
-    isLinux
-    isWindows
-    isAarch64
-    ;
-
   emulator = stdenv.hostPlatform.emulator buildPackages;
   exe = stdenv.hostPlatform.extensions.executable;
-
-  hasNativeTlsFeature = builtins.elem "native-tls" buildFeatures;
 
 in
 rustPlatform.buildRustPackage {
@@ -55,12 +47,11 @@ rustPlatform.buildRustPackage {
     OPENSSL_NO_VENDOR = "1";
   };
 
-  nativeBuildInputs =
-    [ ]
-    ++ lib.optional hasNativeTlsFeature pkg-config
-    ++ lib.optional (installManPages || installShellCompletions) installShellFiles;
+  nativeBuildInputs = [
+    pkg-config
+  ] ++ lib.optional (installManPages || installShellCompletions) installShellFiles;
 
-  buildInputs = lib.optional hasNativeTlsFeature openssl;
+  buildInputs = lib.optional (builtins.elem "native-tls" buildFeatures) openssl;
 
   doCheck = false;
 
