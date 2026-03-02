@@ -1,0 +1,15 @@
+# socks-dir = "/run/user/1000"
+
+[accounts.posteo]
+# sock-file = "/run/user/1000/sirup.sock"
+
+host = "localhost"
+# port = 993
+
+# tls.disable = false
+# tls.provider = "rustls-ring"
+# starttls = false
+
+sasl.mechanisms = ["plain", "login"]
+sasl.login.username = "example@localhost"
+sasl.login.password.raw = "password"
