@@ -619,7 +619,7 @@ dependencies = [
 [[package]]
 name = "io-imap"
 version = "0.0.1"
-source = "git+https://github.com/pimalaya/io-imap?branch=io#8d32ab2258617692ce96a4aa23c687aa38675a6c"
+source = "git+https://github.com/pimalaya/io-imap?branch=io#d9727d9f0f1921936976f07a4195da48cb83971e"
 dependencies = [
  "imap-codec",
  "io-stream",
@@ -639,6 +639,19 @@ dependencies = [
  "log",
  "serde",
  "shellexpand",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "io-smtp"
+version = "0.0.1"
+source = "git+https://github.com/pimalaya/io-smtp#09b29a6ab5341c432b73e142ab0f31cb3762ad58"
+dependencies = [
+ "io-stream",
+ "log",
+ "memchr",
+ "secrecy",
+ "smtp-codec",
  "thiserror 2.0.18",
 ]
 
@@ -1321,6 +1334,7 @@ dependencies = [
  "clap",
  "dirs",
  "io-imap",
+ "io-smtp",
  "io-stream",
  "log",
  "native-tls",
@@ -1330,6 +1344,7 @@ dependencies = [
  "secrecy",
  "serde",
  "uds_windows",
+ "url",
 ]
 
 [[package]]
@@ -1337,6 +1352,29 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "smtp-codec"
+version = "0.3.0"
+source = "git+https://github.com/pimalaya/smtp-codec#1b7b20053b67edfaa081206eacdaea0484a678be"
+dependencies = [
+ "abnf-core",
+ "base64",
+ "log",
+ "nom",
+ "smtp-types",
+]
+
+[[package]]
+name = "smtp-types"
+version = "0.3.0"
+source = "git+https://github.com/pimalaya/smtp-codec#1b7b20053b67edfaa081206eacdaea0484a678be"
+dependencies = [
+ "base64",
+ "bounded-static",
+ "bounded-static-derive",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "stable_deref_trait"
@@ -1531,6 +1569,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

@@ -1,16 +1,23 @@
 # socks-dir = "/run/user/1000"
 
-[accounts.posteo]
-# sock-file = "/run/user/1000/sirup.sock"
+[accounts.example-imap]
+# sock-file = "/run/user/1000/sirup/imap.sock"
 
-host = "localhost"
-# port = 993
-
-# tls.disable = false
-# tls.provider = "rustls"
-# tls.rustls.crypto = "ring"
+url = "imaps://example.com:993"
+# tls.provider = "rustls" | "native-tls"
+# tls.rustls.crypto = "ring" | "aws"
 # starttls = false
 
-sasl.mechanisms = ["plain", "login"]
-sasl.login.username = "example@localhost"
-sasl.login.password.raw = "example"
+sasl.plain.authcid = "example@localhost"
+sasl.plain.passwd.raw = "password"
+
+[accounts.example-smtp]
+# sock-file = "/run/user/1000/sirup/smtp.sock"
+
+url = "smtps://example.com:465"
+# tls.provider = "rustls" | "native-tls"
+# tls.rustls.crypto = "ring" | "aws"
+# starttls = false
+
+sasl.plain.authcid = "example@localhost"
+sasl.plain.passwd.raw = "password"

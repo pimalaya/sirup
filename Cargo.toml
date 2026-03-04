@@ -12,7 +12,9 @@ documentation = "https://github.com/pimalaya/sirup"
 repository = "https://github.com/pimalaya/sirup"
 
 [features]
-default = ["rustls-ring"]
+default = ["imap", "smtp", "rustls-ring", "rustls-aws", "native-tls"]
+imap = ["dep:io-imap"]
+smtp = ["dep:io-smtp"]
 native-tls = ["dep:native-tls"]
 rustls-aws = ["dep:rustls-platform-verifier", "rustls/aws-lc-rs"]
 rustls-ring = ["dep:rustls-platform-verifier", "rustls/ring"]
@@ -24,7 +26,8 @@ pimalaya-toolbox = { version = "0.0.4", default-features = false, features = ["b
 anyhow = "1"
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 dirs = "6"
-io-imap = { version = "0.0.1", default-features = false }
+io-imap = { version = "0.0.1", default-features = false, optional = true }
+io-smtp = { version = "0.0.1", default-features = false, features = ["starttls", "ext_auth"], optional = true }
 io-stream = { version = "0.0.2", features = ["std"] }
 log = "0.4"
 native-tls = { version = "0.2", optional = true }
@@ -33,11 +36,14 @@ rustls = { version = "0.23", default-features = false, optional = true }
 rustls-platform-verifier = { version = "0.6", optional = true }
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
+url = { version = "2.2", features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
 uds_windows = "1"
 
 [patch.crates-io]
 io-imap = { git = "https://github.com/pimalaya/io-imap", branch = "io" }
+io-smtp.git = "https://github.com/pimalaya/io-smtp"
 io-stream.git = "https://github.com/pimalaya/io-stream"
 pimalaya-toolbox.git = "https://github.com/pimalaya/toolbox"
+smtp-codec.git = "https://github.com/pimalaya/smtp-codec"

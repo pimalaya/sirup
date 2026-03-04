@@ -3,132 +3,84 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::{
     fs,
     io::{self, Read, Write},
+    path::PathBuf,
     time::Duration,
 };
 #[cfg(windows)]
 use uds_windows::{UnixListener, UnixStream};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
+#[cfg(feature = "imap")]
 use io_imap::{
     codec::{
         encode::{Encoder, Fragment},
         GreetingCodec,
     },
-    context::ImapContext,
-    coroutines::{authenticate::*, authenticate_anonymous::*, authenticate_plain::*, login::*},
     types::{
         core::Vec1,
-        response::{Capability, Code, Greeting},
+        response::{Code, Greeting},
     },
 };
-use io_stream::runtimes::std::handle;
 use log::{info, warn};
 
 use crate::{
-    account::{Account, SaslCandidate, Tls},
-    stream::{self, Stream},
+    config::AccountConfig,
+    stream::{self, Context, Stream},
 };
 
-pub fn start(mut account: Account) -> Result<()> {
-    let (mut context, mut server) = connect(&account)?;
-
-    let mut candidates = vec![];
-    let ir = context.capability.contains(&Capability::SaslIr);
-    for sasl in account.sasl.drain(..) {
-        match sasl {
-            SaslCandidate::Anonymous { message } => {
-                candidates.push(ImapAuthenticateCandidate::Anonymous(
-                    ImapAuthenticateAnonymousParams::new(message, ir),
-                ));
-            }
-            SaslCandidate::Login { username, password } => {
-                candidates.push(ImapAuthenticateCandidate::Login(ImapLoginParams::new(
-                    username, password,
-                )?));
-            }
-            SaslCandidate::Plain {
-                authzid,
-                authcid,
-                passwd,
-            } => {
-                candidates.push(ImapAuthenticateCandidate::Plain(
-                    ImapAuthenticatePlainParams::new(authzid, authcid, passwd, ir),
-                ));
-            }
-        }
-    }
-
-    let mut arg = None;
-    let mut coroutine = ImapAuthenticate::new(context, candidates);
-
-    loop {
-        match coroutine.resume(arg.take()) {
-            ImapAuthenticateResult::Io(io) => arg = Some(handle(&mut server, io)?),
-            ImapAuthenticateResult::Ok { context: c, .. } => break context = c,
-            ImapAuthenticateResult::Err { err, .. } => bail!(err),
-        }
-    }
-
-    let capability = Vec1::unvalidated(context.capability.into_iter().collect());
+pub fn start(mut config: AccountConfig, sock_path: PathBuf) -> Result<()> {
+    let (context, mut server) = stream::connect(&mut config)?;
 
     // Remove stale socket file from a previous run
-    if account.sock_path.exists() {
-        fs::remove_file(&account.sock_path)?;
+    if sock_path.exists() {
+        fs::remove_file(&sock_path)?;
     }
 
-    let listener = UnixListener::bind(&account.sock_path)?;
+    if let Some(sock_dir) = sock_path.parent() {
+        fs::create_dir_all(sock_dir)?;
+    }
+
+    let listener = UnixListener::bind(&sock_path)?;
 
     for incoming in listener.incoming() {
         let mut client = incoming?;
         info!("client connected");
 
-        // Send PREAUTH greeting
+        // Send protocol-specific greeting
+        match &context {
+            #[cfg(feature = "imap")]
+            Context::Imap(_) => {
+                let capability = Vec1::unvalidated(context.imap_capability().into_iter().collect());
+                let greeting = Greeting::preauth(
+                    Some(Code::Capability(capability)),
+                    "Sirup IMAP session ready",
+                )?;
 
-        let greeting = Greeting::preauth(
-            Some(Code::Capability(capability.clone())),
-            "Sirup IMAP session ready",
-        )?;
-
-        for fragment in GreetingCodec::new().encode(&greeting) {
-            match fragment {
-                Fragment::Line { data } => client.write_all(&data)?,
-                Fragment::Literal { data, .. } => client.write_all(&data)?,
+                for fragment in GreetingCodec::new().encode(&greeting) {
+                    match fragment {
+                        Fragment::Line { data } => client.write_all(&data)?,
+                        Fragment::Literal { data, .. } => client.write_all(&data)?,
+                    }
+                }
+            }
+            #[cfg(feature = "smtp")]
+            Context::Smtp(_) => {
+                // SMTP greeting: 220 ready
+                client.write_all(b"220 Sirup SMTP session ready\r\n")?;
             }
         }
 
         client.flush()?;
 
-        // Proxy bidirectionally between client and IMAP server
+        // Proxy bidirectionally between client and server
         match proxy(&mut server, &mut client) {
             Ok(()) => info!("client disconnected"),
             Err(err) => warn!("proxy error: {err}"),
         }
     }
 
-    let _ = fs::remove_file(&account.sock_path);
+    let _ = fs::remove_file(&sock_path);
     Ok(())
-}
-
-fn connect(account: &Account) -> Result<(ImapContext, Stream)> {
-    match &account.tls {
-        Tls::None => stream::tcp(&account.host, account.port),
-        #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
-        Tls::Rustls {
-            starttls,
-            cert,
-            provider,
-        } => stream::rustls(
-            &account.host,
-            account.port,
-            *starttls,
-            cert.as_deref(),
-            provider.clone(),
-        ),
-        #[cfg(feature = "native-tls")]
-        Tls::NativeTls { starttls, cert } => {
-            stream::native_tls(&account.host, account.port, *starttls, cert.as_deref())
-        }
-    }
 }
 
 fn proxy(server: &mut Stream, client: &mut UnixStream) -> Result<()> {

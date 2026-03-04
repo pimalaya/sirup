@@ -1,4 +1,3 @@
-mod account;
 mod cli;
 mod config;
 mod repl;
@@ -13,7 +12,6 @@ use pimalaya_toolbox::{
 };
 
 use crate::{
-    account::Account,
     cli::{SirupCli, SirupCommand},
     config::Config,
 };
@@ -26,15 +24,40 @@ fn main() -> Result<()> {
     match cli.command {
         SirupCommand::Start { account } => {
             let config = Config::from_paths(&cli.config_paths)?;
-            let (_, account_config) = config.get_account(Some(&account.name))?;
-            let account = Account::try_from_configs(config, account_config)?;
-            session::start(account)
+            let (account_name, mut account_config) = config.get_account(Some(&account.name))?;
+
+            let sock_path = match account_config.sock_file.take() {
+                Some(path) => path,
+                None => config.sock_path(&account_name),
+            };
+
+            session::start(account_config, sock_path)
         }
         SirupCommand::Repl { account } => {
             let config = Config::from_paths(&cli.config_paths)?;
-            let (_, account_config) = config.get_account(Some(&account.name))?;
-            let account = Account::try_from_configs(config, account_config)?;
-            repl::start(account)
+            let (account_name, account_config) = config.get_account(Some(&account.name))?;
+
+            let sock_path = match account_config.sock_file {
+                Some(path) => path,
+                None => config.sock_path(&account_name),
+            };
+
+            let scheme = account_config.url.scheme();
+
+            #[cfg(feature = "imap")]
+            if scheme.eq_ignore_ascii_case("imap") || scheme.eq_ignore_ascii_case("imaps") {
+                return repl::start_imap(sock_path);
+            }
+
+            #[cfg(feature = "smtp")]
+            if scheme.eq_ignore_ascii_case("smtp") || scheme.eq_ignore_ascii_case("smtps") {
+                return repl::start_smtp(sock_path);
+            }
+
+            anyhow::bail!(
+                "REPL not available for scheme '{}'. Enable the appropriate feature (imap/smtp).",
+                scheme
+            )
         }
         SirupCommand::Manuals(cmd) => {
             let mut printer = StdoutPrinter::new(&cli.json);

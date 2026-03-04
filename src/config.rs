@@ -3,6 +3,7 @@ use std::{collections::HashMap, env::temp_dir, fs, path::PathBuf};
 use log::{error, warn};
 use pimalaya_toolbox::{config::TomlConfig, secret::Secret};
 use serde::Deserialize;
+use url::Url;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -10,6 +11,14 @@ pub struct Config {
     #[serde(default = "default_socks_dir")]
     pub socks_dir: PathBuf,
     pub accounts: HashMap<String, AccountConfig>,
+}
+
+impl Config {
+    pub fn sock_path(&self, account_name: &str) -> PathBuf {
+        self.socks_dir
+            .join(env!("CARGO_PKG_NAME"))
+            .join(format!("{account_name}.sock"))
+    }
 }
 
 fn default_socks_dir() -> PathBuf {
@@ -29,12 +38,29 @@ fn default_socks_dir() -> PathBuf {
     path
 }
 
+impl TomlConfig for Config {
+    type Account = AccountConfig;
+
+    fn project_name() -> &'static str {
+        env!("CARGO_PKG_NAME")
+    }
+
+    fn find_default_account(&self) -> Option<(String, Self::Account)> {
+        None
+    }
+
+    fn find_account(&self, name: &str) -> Option<(String, Self::Account)> {
+        self.accounts
+            .get(name)
+            .map(|account| (name.to_owned(), account.clone()))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AccountConfig {
     pub sock_file: Option<PathBuf>,
-    pub host: String,
-    pub port: Option<u16>,
+    pub url: Url,
     #[serde(default)]
     pub tls: TlsConfig,
     #[serde(default)]
@@ -46,8 +72,6 @@ pub struct AccountConfig {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TlsConfig {
-    #[serde(default)]
-    pub disable: bool,
     pub provider: Option<TlsProviderConfig>,
     #[serde(default)]
     pub rustls: RustlsConfig,
@@ -117,22 +141,4 @@ pub struct SaslPlainConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslAnonymousConfig {
     pub message: Option<String>,
-}
-
-impl TomlConfig for Config {
-    type Account = AccountConfig;
-
-    fn project_name() -> &'static str {
-        env!("CARGO_PKG_NAME")
-    }
-
-    fn find_default_account(&self) -> Option<(String, Self::Account)> {
-        None
-    }
-
-    fn find_account(&self, name: &str) -> Option<(String, Self::Account)> {
-        self.accounts
-            .get(name)
-            .map(|account| (name.to_owned(), account.clone()))
-    }
 }
