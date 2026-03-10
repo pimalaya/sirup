@@ -944,7 +944,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pimalaya-toolbox"
 version = "0.0.4"
-source = "git+https://github.com/pimalaya/toolbox#fc1dec2d24e1efbf2d12802b182b24ae0c19acfa"
+source = "git+https://github.com/pimalaya/toolbox#25569c8e5a5f054d90c832fd7f48a6225a3b9501"
 dependencies = [
  "anyhow",
  "clap",
@@ -1379,6 +1379,7 @@ dependencies = [
  "pimalaya-toolbox",
  "secrecy",
  "serde",
+ "uds_windows",
  "url",
 ]
 

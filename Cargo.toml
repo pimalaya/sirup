@@ -44,6 +44,9 @@ secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 url = { version = "2.2", features = ["serde"] }
 
+[target.'cfg(windows)'.dependencies]
+uds_windows = "1"
+
 [patch.crates-io]
 io-imap = { git = "https://github.com/pimalaya/io-imap", branch = "io" }
 io-smtp.git = "https://github.com/pimalaya/io-smtp"
