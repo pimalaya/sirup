@@ -1,13 +1,5 @@
-# --------------------------------
-# Global config
-# --------------------------------
-
 # Socket directory for all accounts, defaults to $XDG_RUNTIME_DIR
 #socks-dir = "/run/user/1000"
-
-# --------------------------------
-# Account config
-# --------------------------------
 
 [accounts.example]
 

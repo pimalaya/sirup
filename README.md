@@ -8,7 +8,7 @@ CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix socke
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
-  - [Start an IMAAP daemon](#start-an-imap-daemon)
+  - [Start an IMAP daemon](#start-an-imap-daemon)
   - [Launch an IMAP REPL](#launch-an-imap-repl)
 - [FAQ](#faq)
 - [Social](#social)
