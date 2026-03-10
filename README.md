@@ -1,6 +1,6 @@
-# Sirup [![Releases](https://img.shields.io/github/v/release/pimalaya/sirup?color=success)](https://github.com/pimalaya/sirup/releases/latest) [![Repology](https://img.shields.io/repology/repositories/sirup?color=success)]("https://repology.org/project/sirup/versions) [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya)
+# Sirup [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya)
 
-CLI to spawn pre-authenticated IMAP sessions and expose them via Unix sockets
+CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix sockets
 
 ## Table of contents
 
@@ -8,14 +8,16 @@ CLI to spawn pre-authenticated IMAP sessions and expose them via Unix sockets
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
-  - [Start the daemon](#start-the-daemon)
-  - [Launch a REPL](#launch-a-repl)
+  - [Start an IMAAP daemon](#start-an-imap-daemon)
+  - [Launch an IMAP REPL](#launch-an-imap-repl)
 - [FAQ](#faq)
 - [Social](#social)
 - [Sponsoring](#sponsoring)
 
 ## Features
 
+- **IMAP** support (requires `imap` cargo features)
+- **SMTP** support (requires `smtp` cargo features)
 - **TLS** support:
   - Native TLS support via [native-tls](https://crates.io/crates/native-tls) crate (requires `native-tls` feature)
   - Rust TLS support via [rustls](https://crates.io/crates/rustls) crate with:
@@ -29,8 +31,8 @@ CLI to spawn pre-authenticated IMAP sessions and expose them via Unix sockets
   - PLAIN <sup>[rfc4616](https://www.iana.org/go/rfc4616)</sup>
   - SCRAM-SHA-256 <sup>[rfc7677](https://datatracker.ietf.org/doc/html/rfc7677)</sup>
   - XOAUTH2 <sup>[google](https://developers.google.com/workspace/gmail/imap/xoauth2-protocol)</sup>
-- Pre-authenticated IMAP session redirected to Unix sockets via `sirup start`
-- REPL that can interact with the Unix socket-based IMAP session via `sirup repl`
+- Pre-authenticated IMAP/SMTP session redirected to Unix sockets via `sirup start`
+- REPL that can interact with the Unix socket-based IMAP/SMTP session via `sirup repl`
 - Partial **JSON** support with `--json`
 
 *Sirup CLI is written in [Rust](https://www.rust-lang.org/), and relies on [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to enable or disable functionalities. Default features can be found in the `features` section of the [`Cargo.toml`](https://github.com/pimalaya/sirup/blob/master/Cargo.toml#L18), or on [docs.rs](https://docs.rs/crate/sirup/latest/features).*
@@ -119,7 +121,7 @@ The wizard is not yet available (it should come soon), meanwhile you can manuall
 
 ## Usage
 
-### Start the daemon
+### Start an IMAP daemon
 
 ```
 $ sirup start
@@ -129,14 +131,14 @@ This command spawns a blocking daemon than connects to your IMAP server, perform
 
 Any client that can connect to, read IMAP response from and write IMAP commands into Unix sockets can interact with your session.
 
-The greeting is replaced by a `* PREAUTH [CAPABILITY…] Sirup IMAP session ready`.
+The greeting is replaced by a `* PREAUTH [CAPABILITY…] Sirup IMAP pre-auth session ready`.
 
-### Launch a REPL
+### Launch an IMAP REPL
 
 ```
 $ sirup repl
 
-S: * PREAUTH [CAPABILITY…] Sirup IMAP session ready
+S: * PREAUTH [CAPABILITY…] Sirup IMAP pre-auth session ready
 
 C: <Enter your IMAP raw command>
 ```
@@ -157,7 +159,7 @@ The advanced way is based on environment variables:
 Logs are written to the `stderr`, which means that you can redirect them easily to a file:
 
 ```
-sirup token show --debug 2>/tmp/sirup.log
+sirup start example --debug 2>/tmp/sirup.log
 ```
 
 ## Social

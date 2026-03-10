@@ -39,7 +39,7 @@ use rustls_platform_verifier::{ConfigVerifierExt, Verifier};
 use crate::config::{AccountConfig, RustlsCryptoConfig, TlsConfig, TlsProviderConfig};
 
 pub enum Stream {
-    Plain(TcpStream),
+    Imap(TcpStream),
     #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
     Rustls(StreamOwned<ClientConnection, TcpStream>),
     #[cfg(feature = "native-tls")]

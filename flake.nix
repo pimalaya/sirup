@@ -1,5 +1,5 @@
 {
-  description = "CLI to spawn pre-authenticated IMAP sessions and expose them via Unix sockets";
+  description = "CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix sockets";
 
   inputs = {
     nixpkgs = {

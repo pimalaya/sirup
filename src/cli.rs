@@ -1,13 +1,27 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use anyhow::{bail, Result};
+use clap::{CommandFactory, Parser, Subcommand};
 use pimalaya_toolbox::{
+    config::TomlConfig,
     long_version,
-    terminal::clap::{
-        args::{AccountArg, JsonFlag, LogFlags},
-        commands::{CompletionCommand, ManualCommand},
-        parsers::path_parser,
+    sasl::{Sasl, SaslAnonymous, SaslLogin, SaslMechanism, SaslPlain},
+    stream::{Rustls, RustlsCrypto, Tls, TlsProvider},
+    terminal::{
+        clap::{
+            args::{AccountArg, JsonFlag, LogFlags},
+            commands::{CompletionCommand, ManualCommand},
+            parsers::path_parser,
+        },
+        printer::Printer,
     },
+};
+
+#[cfg(any(feature = "imap", feature = "smtp"))]
+use crate::repl;
+use crate::{
+    config::{Config, RustlsCryptoConfig, SaslMechanismConfig, TlsProviderConfig},
+    session,
 };
 
 #[derive(Debug, Parser)]
@@ -39,6 +53,9 @@ pub struct SirupCli {
 
 #[derive(Debug, Subcommand)]
 pub enum SirupCommand {
+    Manuals(ManualCommand),
+    Completions(CompletionCommand),
+
     /// Start a pre-authenticated IMAP session for the given account.
     ///
     /// This command starts a daemon (blocking) for the given account,
@@ -57,6 +74,105 @@ pub enum SirupCommand {
         #[command(flatten)]
         account: AccountArg,
     },
-    Manuals(ManualCommand),
-    Completions(CompletionCommand),
+}
+
+impl SirupCommand {
+    pub fn exec(self, printer: &mut impl Printer, config_paths: &[PathBuf]) -> Result<()> {
+        match self {
+            SirupCommand::Manuals(cmd) => cmd.execute(printer, SirupCli::command()),
+            SirupCommand::Completions(cmd) => cmd.execute(printer, SirupCli::command()),
+
+            SirupCommand::Start { account } => {
+                let config = Config::from_paths(config_paths)?;
+                let (account_name, mut account_config) = config.get_account(Some(&account.name))?;
+
+                let sock_path = match account_config.sock_file.take() {
+                    Some(path) => path,
+                    None => config.sock_path(&account_name),
+                };
+
+                let url = account_config.url;
+
+                let tls = Tls {
+                    provider: match account_config.tls.provider {
+                        Some(TlsProviderConfig::Rustls) => Some(TlsProvider::Rustls),
+                        Some(TlsProviderConfig::NativeTls) => Some(TlsProvider::NativeTls),
+                        None => None,
+                    },
+                    rustls: Rustls {
+                        crypto: match account_config.tls.rustls.crypto {
+                            Some(RustlsCryptoConfig::Aws) => Some(RustlsCrypto::Aws),
+                            Some(RustlsCryptoConfig::Ring) => Some(RustlsCrypto::Ring),
+                            None => None,
+                        },
+                    },
+                    cert: account_config.tls.cert,
+                };
+
+                let starttls = account_config.starttls;
+
+                let sasl = Sasl {
+                    mechanisms: account_config
+                        .sasl
+                        .mechanisms
+                        .into_iter()
+                        .map(|m| match m {
+                            SaslMechanismConfig::Login => SaslMechanism::Login,
+                            SaslMechanismConfig::Plain => SaslMechanism::Plain,
+                            SaslMechanismConfig::Anonymous => SaslMechanism::Anonymous,
+                        })
+                        .collect(),
+                    anonymous: match account_config.sasl.anonymous {
+                        Some(auth) => Some(SaslAnonymous {
+                            message: auth.message,
+                        }),
+                        None => None,
+                    },
+                    login: match account_config.sasl.login {
+                        Some(auth) => Some(SaslLogin {
+                            username: auth.username,
+                            password: auth.password.get()?,
+                        }),
+                        None => None,
+                    },
+                    plain: match account_config.sasl.plain {
+                        Some(auth) => Some(SaslPlain {
+                            authzid: auth.authzid,
+                            authcid: auth.authcid,
+                            passwd: auth.passwd.get()?,
+                        }),
+                        None => None,
+                    },
+                };
+
+                session::start(sock_path, url, tls, starttls, sasl)
+            }
+            SirupCommand::Repl { account } => {
+                let config = Config::from_paths(config_paths)?;
+                let (account_name, account_config) = config.get_account(Some(&account.name))?;
+
+                let sock_path = match account_config.sock_file {
+                    Some(path) => path,
+                    None => config.sock_path(&account_name),
+                };
+
+                let scheme = account_config.url.scheme();
+
+                #[cfg(feature = "imap")]
+                if scheme.eq_ignore_ascii_case("imap") || scheme.eq_ignore_ascii_case("imaps") {
+                    return repl::imap::start(sock_path);
+                }
+
+                #[cfg(feature = "smtp")]
+                if scheme.eq_ignore_ascii_case("smtp") || scheme.eq_ignore_ascii_case("smtps") {
+                    return repl::smtp::start(sock_path);
+                }
+
+                bail!(
+                    "REPL not available for scheme '{}'. Enable the appropriate feature (imap/smtp).",
+                    scheme
+		)
+            }
+        }
+    }
 }

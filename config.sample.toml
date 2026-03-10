@@ -1,23 +1,51 @@
-# socks-dir = "/run/user/1000"
+# --------------------------------
+# Global config
+# --------------------------------
 
-[accounts.example-imap]
-# sock-file = "/run/user/1000/sirup/imap.sock"
+# Socket directory for all accounts, defaults to $XDG_RUNTIME_DIR
+#socks-dir = "/run/user/1000"
 
-url = "imaps://example.com:993"
-# tls.provider = "rustls" | "native-tls"
-# tls.rustls.crypto = "ring" | "aws"
-# starttls = false
+# --------------------------------
+# Account config
+# --------------------------------
 
-sasl.plain.authcid = "example@localhost"
-sasl.plain.passwd.raw = "password"
+[accounts.example]
 
-[accounts.example-smtp]
-# sock-file = "/run/user/1000/sirup/smtp.sock"
+# Socket file for this account, defaults to $XDG_RUNTIME_DIR/sirup/{account}.sock
+#sock-file = "/run/user/1000/sirup/imap.sock"
 
-url = "smtps://example.com:465"
-# tls.provider = "rustls" | "native-tls"
-# tls.rustls.crypto = "ring" | "aws"
-# starttls = false
+# URL connection in form (imap|smtp)[s]://host[:port]
+url = "imap://127.0.0.1"
 
-sasl.plain.authcid = "example@localhost"
-sasl.plain.passwd.raw = "password"
+# TLS provider
+tls.provider = "rustls"
+#tls.provider = "native-tls"
+
+# Crypto provider for rustls
+tls.rustls.crypto = "ring"
+#tls.rustls.crypto = "aws"
+
+# Custom TLS certificate
+#tls.cert = "/path/to/custom/cert.pem"
+
+# Enable STARTTLS (when URL scheme is imaps or smtps)
+starttls = false
+
+# SASL mechanisms to try in this particular order
+sasl.mechanisms = ["plain", "login"]
+
+# SASL ANONYMOUS
+# https://datatracker.ietf.org/doc/html/rfc4505
+sasl.anonymous.message = "himalaya"
+
+# SASL PLAIN
+# https://datatracker.ietf.org/doc/html/rfc4616
+sasl.plain.authcid = "username"
+sasl.plain.passwd.command = ["mimosa", "password", "read", "example"]
+#sasl.plain.passwd.raw = "***"
+
+# SASL LOGIN
+# https://datatracker.ietf.org/doc/html/draft-murchison-sasl-login-00
+sasl.login.username = "username"
+sasl.login.password.command = ["mimosa", "password", "read", "example"]
+#sasl.login.password.raw = "***"
