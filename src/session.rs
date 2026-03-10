@@ -1,8 +1,22 @@
-#[cfg(feature = "imap")]
-use pimalaya_toolbox::stream::imap::ImapSession;
-#[cfg(feature = "smtp")]
-use pimalaya_toolbox::stream::smtp::SmtpSession;
-use pimalaya_toolbox::{sasl::Sasl, stream::Tls};
+// This file is part of Sirup, a CLI to spawn pre-authenticated
+// IMAP/SMTP sessions and expose them via Unix sockets.
+//
+// Copyright (C) 2026 Clément DOUIN <pimalaya.org@posteo.net>
+//
+// This program is free software: you can redistribute it and/or
+// modify it under the terms of the GNU Affero General Public License
+// as published by the Free Software Foundation, either version 3 of
+// the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public
+// License along with this program. If not, see
+// <https://www.gnu.org/licenses/>.
+
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::{
@@ -11,8 +25,6 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
-#[cfg(windows)]
-use uds_windows::{UnixListener, UnixStream};
 
 use anyhow::{bail, Result};
 #[cfg(feature = "imap")]
@@ -27,6 +39,13 @@ use io_imap::{
     },
 };
 use log::{info, warn};
+#[cfg(feature = "imap")]
+use pimalaya_toolbox::stream::imap::ImapSession;
+#[cfg(feature = "smtp")]
+use pimalaya_toolbox::stream::smtp::SmtpSession;
+use pimalaya_toolbox::{sasl::Sasl, stream::Tls};
+#[cfg(windows)]
+use uds_windows::{UnixListener, UnixStream};
 use url::Url;
 
 #[derive(Debug)]
