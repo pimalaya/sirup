@@ -1,22 +1,23 @@
-// This file is part of Sirup, a CLI to spawn pre-authenticated
-// IMAP/SMTP sessions and expose them via Unix sockets.
+// This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
+// sessions and expose them via Unix sockets.
 //
 // Copyright (C) 2026 Clément DOUIN <pimalaya.org@posteo.net>
 //
-// This program is free software: you can redistribute it and/or
-// modify it under the terms of the GNU Affero General Public License
-// as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version.
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version.
 //
-// This program is distributed in the hope that it will be useful, but
-// WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-// Affero General Public License for more details.
+// This program is distributed in the hope that it will be useful, but WITHOUT
+// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
 //
-// You should have received a copy of the GNU Affero General Public
-// License along with this program. If not, see
-// <https://www.gnu.org/licenses/>.
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+#[cfg(feature = "smtp")]
+use std::net::Ipv4Addr;
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::{
@@ -29,6 +30,7 @@ use std::{
 use anyhow::{bail, Result};
 #[cfg(feature = "imap")]
 use io_imap::{
+    client::ImapClientStd,
     codec::{
         encode::{Encoder, Fragment},
         GreetingCodec,
@@ -38,12 +40,12 @@ use io_imap::{
         response::{Code, Greeting},
     },
 };
-use log::{info, warn};
-#[cfg(feature = "imap")]
-use pimalaya_toolbox::stream::imap::ImapSession;
 #[cfg(feature = "smtp")]
-use pimalaya_toolbox::stream::smtp::SmtpSession;
-use pimalaya_toolbox::{sasl::Sasl, stream::Tls};
+use io_smtp::{client::SmtpClientStd, rfc5321::types::ehlo_domain::EhloDomain};
+use log::{info, warn};
+#[cfg(any(feature = "imap", feature = "smtp"))]
+use pimalaya_stream::std::stream::StreamStd;
+use pimalaya_stream::{sasl::Sasl, tls::Tls};
 #[cfg(windows)]
 use uds_windows::{UnixListener, UnixStream};
 use url::Url;
@@ -51,18 +53,24 @@ use url::Url;
 #[derive(Debug)]
 pub enum Session {
     #[cfg(feature = "imap")]
-    Imap(ImapSession),
+    Imap(ImapClientStd<StreamStd>),
     #[cfg(feature = "smtp")]
-    Smtp(SmtpSession),
+    Smtp(SmtpClientStd<StreamStd>),
+    #[cfg(not(feature = "imap"))]
+    #[cfg(not(feature = "smtp"))]
+    Invalid,
 }
 
 impl Session {
     pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         match self {
             #[cfg(feature = "imap")]
-            Self::Imap(conn) => conn.stream.set_read_timeout(timeout),
+            Self::Imap(client) => client.stream().set_read_timeout(timeout),
             #[cfg(feature = "smtp")]
-            Self::Smtp(conn) => conn.stream.set_read_timeout(timeout),
+            Self::Smtp(client) => client.stream().set_read_timeout(timeout),
+            #[cfg(not(feature = "imap"))]
+            #[cfg(not(feature = "smtp"))]
+            Self::Invalid => Ok(()),
         }
     }
 }
@@ -71,9 +79,12 @@ impl Read for Session {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             #[cfg(feature = "imap")]
-            Self::Imap(conn) => conn.stream.read(buf),
+            Self::Imap(client) => client.stream_mut().read(buf),
             #[cfg(feature = "smtp")]
-            Self::Smtp(conn) => conn.stream.read(buf),
+            Self::Smtp(client) => client.stream_mut().read(buf),
+            #[cfg(not(feature = "imap"))]
+            #[cfg(not(feature = "smtp"))]
+            Self::Invalid => Ok(0),
         }
     }
 }
@@ -82,41 +93,61 @@ impl Write for Session {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             #[cfg(feature = "imap")]
-            Self::Imap(conn) => conn.stream.write(buf),
+            Self::Imap(client) => client.stream_mut().write(buf),
             #[cfg(feature = "smtp")]
-            Self::Smtp(conn) => conn.stream.write(buf),
+            Self::Smtp(client) => client.stream_mut().write(buf),
+            #[cfg(not(feature = "imap"))]
+            #[cfg(not(feature = "smtp"))]
+            Self::Invalid => Ok(0),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
             #[cfg(feature = "imap")]
-            Self::Imap(conn) => conn.stream.flush(),
+            Self::Imap(client) => client.stream_mut().flush(),
             #[cfg(feature = "smtp")]
-            Self::Smtp(conn) => conn.stream.flush(),
+            Self::Smtp(client) => client.stream_mut().flush(),
+            #[cfg(not(feature = "imap"))]
+            #[cfg(not(feature = "smtp"))]
+            Self::Invalid => Ok(()),
         }
     }
 }
 
-pub fn start(sock_path: PathBuf, url: Url, tls: Tls, starttls: bool, sasl: Sasl) -> Result<()> {
+pub fn start(
+    sock_path: PathBuf,
+    url: Url,
+    tls: Tls,
+    starttls: bool,
+    sasl: Option<Sasl>,
+) -> Result<()> {
     let mut conn = match url.scheme() {
         #[cfg(feature = "imap")]
-        scheme if scheme.eq_ignore_ascii_case("imap") || scheme.eq_ignore_ascii_case("imaps") => {
-            Session::Imap(ImapSession::new(url, tls, starttls, sasl)?)
-        }
-        #[cfg(not(feature = "imap"))]
-        scheme if scheme.eq_ignore_ascii_case("imap") || scheme.eq_ignore_ascii_case("imaps") => {
-            bail!("Missing cargo feature: `imap`");
-        }
+        #[cfg(any(
+            feature = "rustls-ring",
+            feature = "rustls-aws",
+            feature = "native-tls"
+        ))]
+        "imap" | "imaps" => Session::Imap(ImapClientStd::connect(&url, &tls, starttls, sasl)?),
         #[cfg(feature = "smtp")]
-        scheme if scheme.eq_ignore_ascii_case("smtp") || scheme.eq_ignore_ascii_case("smtps") => {
-            Session::Smtp(SmtpSession::new(url, tls, starttls, sasl)?)
+        "smtp" | "smtps" => {
+            let domain: EhloDomain<'static> = Ipv4Addr::new(127, 0, 0, 1).into();
+            Session::Smtp(SmtpClientStd::connect(&url, &tls, starttls, domain, sasl)?)
         }
+
+        #[cfg(not(feature = "imap"))]
+        "imap" | "imaps" => bail!("missing cargo feature: `imap`"),
         #[cfg(not(feature = "smtp"))]
-        scheme if scheme.eq_ignore_ascii_case("smtp") || scheme.eq_ignore_ascii_case("smtps") => {
-            bail!("Missing cargo feature: `smtp`");
+        "smtp" | "smtps" => bail!("missing cargo feature: `smtp`"),
+        #[cfg(not(feature = "rustls-aws"))]
+        #[cfg(not(feature = "rustls-ring"))]
+        #[cfg(not(feature = "native-tls"))]
+        _ => {
+            bail!("missing cargo feature: `rustls-aws`, `rustls-ring` or `native-tls`")
         }
-        scheme => bail!("Invalid URL scheme {scheme}"),
+
+        s => bail!("unknown scheme `{s}`, expects `imap(s)` or `smtp(s)`"),
     };
 
     // Remove stale socket file from a previous run
@@ -137,9 +168,12 @@ pub fn start(sock_path: PathBuf, url: Url, tls: Tls, starttls: bool, sasl: Sasl)
         // Send protocol-specific greeting
         match &conn {
             #[cfg(feature = "imap")]
-            Session::Imap(conn) => {
-                let capability =
-                    Vec1::unvalidated(conn.context.capability.clone().into_iter().collect());
+            Session::Imap(imap) => {
+                let caps = imap
+                    .context()
+                    .map(|ctx| ctx.capability.clone())
+                    .unwrap_or_default();
+                let capability = Vec1::unvalidated(caps);
                 let greeting = Greeting::preauth(
                     Some(Code::Capability(capability)),
                     "Sirup IMAP pre-auth session ready",
@@ -157,6 +191,9 @@ pub fn start(sock_path: PathBuf, url: Url, tls: Tls, starttls: bool, sasl: Sasl)
                 // SMTP greeting: 220 ready
                 client.write_all(b"220 Sirup SMTP pre-auth session ready\r\n")?;
             }
+            #[cfg(not(feature = "imap"))]
+            #[cfg(not(feature = "smtp"))]
+            Session::Invalid => (),
         }
 
         client.flush()?;

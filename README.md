@@ -8,34 +8,30 @@ CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix socke
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
-  - [Start an IMAP daemon](#start-an-imap-daemon)
-  - [Launch an IMAP REPL](#launch-an-imap-repl)
+  - [Start a pre-authenticated session](#start-a-pre-authenticated-session)
+  - [Launch a REPL](#launch-a-repl)
 - [FAQ](#faq)
 - [Social](#social)
 - [Sponsoring](#sponsoring)
 
 ## Features
 
-- **IMAP** support (requires `imap` cargo features)
-- **SMTP** support (requires `smtp` cargo features)
-- **TLS** support:
-  - Native TLS support via [native-tls](https://crates.io/crates/native-tls) crate (requires `native-tls` feature)
-  - Rust TLS support via [rustls](https://crates.io/crates/rustls) crate with:
-    - AWS crypto support (requires `rustls-aws` feature)
-    - Ring crypto support (requires `rustls-ring` feature)
-- **SASL** support:
-  - Anonymous <sup>[rfc4505](https://www.iana.org/go/rfc4505)</sup>
-  - GSSAPI <sup>[rfc4752](https://www.iana.org/go/rfc4752)</sup>
+- **IMAP** support via [`io-imap`](https://github.com/pimalaya/io-imap) (requires `imap` cargo feature)
+- **SMTP** support via [`io-smtp`](https://github.com/pimalaya/io-smtp) (requires `smtp` cargo feature)
+- **TLS** support via [`pimalaya-stream`](https://github.com/pimalaya/stream):
+  - [`native-tls`](https://crates.io/crates/native-tls) backend (requires `native-tls` feature)
+  - [`rustls`](https://crates.io/crates/rustls) backend with:
+    - AWS-LC crypto provider (requires `rustls-aws` feature)
+    - Ring crypto provider (requires `rustls-ring` feature)
+- **SASL** mechanisms exposed in the config:
+  - ANONYMOUS <sup>[rfc4505](https://www.iana.org/go/rfc4505)</sup>
   - LOGIN <sup>[draft](https://datatracker.ietf.org/doc/html/draft-murchison-sasl-login-00)</sup>
-  - OAUTHBEARER <sup>[rfc7628](https://www.iana.org/go/rfc7628)</sup>
   - PLAIN <sup>[rfc4616](https://www.iana.org/go/rfc4616)</sup>
-  - SCRAM-SHA-256 <sup>[rfc7677](https://datatracker.ietf.org/doc/html/rfc7677)</sup>
-  - XOAUTH2 <sup>[google](https://developers.google.com/workspace/gmail/imap/xoauth2-protocol)</sup>
-- Pre-authenticated IMAP/SMTP session redirected to Unix sockets via `sirup start`
-- REPL that can interact with the Unix socket-based IMAP/SMTP session via `sirup repl`
+- Pre-authenticated IMAP/SMTP session proxied to a Unix socket via `sirup start <account>`
+- REPL that interacts with the Unix-socket-backed session via `sirup repl <account>`
 - Partial **JSON** support with `--json`
 
-*Sirup CLI is written in [Rust](https://www.rust-lang.org/), and relies on [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to enable or disable functionalities. Default features can be found in the `features` section of the [`Cargo.toml`](https://github.com/pimalaya/sirup/blob/master/Cargo.toml#L18), or on [docs.rs](https://docs.rs/crate/sirup/latest/features).*
+*Sirup CLI is written in [Rust](https://www.rust-lang.org/), and relies on [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to enable or disable functionalities. Default features can be found in the `features` section of the [`Cargo.toml`](https://github.com/pimalaya/sirup/blob/master/Cargo.toml), or on [docs.rs](https://docs.rs/crate/sirup/latest/features).*
 
 ## Installation
 
@@ -121,45 +117,56 @@ The wizard is not yet available (it should come soon), meanwhile you can manuall
 
 ## Usage
 
-### Start an IMAP daemon
+### Start a pre-authenticated session
 
 ```
-$ sirup start
+$ sirup start <account>
 ```
 
-This command spawns a blocking daemon than connects to your IMAP server, performs the TLS negociations if necessary, authenticates yourself, then exposes this session via a Unix socket.
+This command spawns a blocking daemon that connects to your IMAP or SMTP server (depending on the account's URL scheme), performs the TLS negociations if necessary, authenticates you, then exposes this session via a Unix socket.
 
-Any client that can connect to, read IMAP response from and write IMAP commands into Unix sockets can interact with your session.
+Any client that can connect to, read responses from and write commands into Unix sockets can interact with the session.
 
-The greeting is replaced by a `* PREAUTH [CAPABILITY…] Sirup IMAP pre-auth session ready`.
+The protocol-level greeting is replaced by:
 
-### Launch an IMAP REPL
+- IMAP: `* PREAUTH [CAPABILITY…] Sirup IMAP pre-auth session ready`
+- SMTP: `220 Sirup SMTP pre-auth session ready`
+
+The IMAP `EHLO`-equivalent capability list reflects whatever the upstream server advertised after authentication.
+
+### Launch a REPL
 
 ```
-$ sirup repl
+$ sirup repl <account>
 
 S: * PREAUTH [CAPABILITY…] Sirup IMAP pre-auth session ready
 
 C: <Enter your IMAP raw command>
 ```
 
-The REPL is just a simple client that connects to the Unix socket and allows you to send raw IMAP commands. It mostly stands for testing purpose, and as a demonstration on how to implement clients.
+The REPL is a simple client that connects to the Unix socket and forwards raw commands. It picks IMAP or SMTP framing based on the account's URL scheme. Mostly useful for testing and as a demonstration on how to implement clients.
 
 ## FAQ
 
 ### How to debug Sirup CLI?
 
-The simplest way is to use `--debug` and/or `--trace` arguments.
+The simplest way is to pass `--log-level=<level>` (alias `--log=<level>`), where `<level>` is one of `off`, `error`, `warn`, `info`, `debug`, `trace`.
 
 The advanced way is based on environment variables:
 
-- `RUST_LOG=<level>`: determines the log level filter, can be one of `off`, `error`, `warn`, `info`, `debug` and `trace`.
-- `RUST_BACKTRACE=1`: enables the full error backtrace, which include source lines where the error originated from.
+- `RUST_LOG=<filter>`: determines the log level filter (per-target syntax supported, see the [`env_logger`](https://docs.rs/env_logger/latest/env_logger/) documentation). Consulted only when `--log-level` is not passed.
+- `RUST_BACKTRACE=1`: enables the full error backtrace, which includes source lines where the error originated from.
 
-Logs are written to the `stderr`, which means that you can redirect them easily to a file:
+Logs are written to `stderr`, which means that you can redirect them easily to a file:
 
 ```
-sirup start example --debug 2>/tmp/sirup.log
+sirup start example --log-level=debug 2>/tmp/sirup.log
+```
+
+You can also send logs straight to a file via `--log-file=<path>`:
+
+```
+sirup start example --log-level=debug --log-file=/tmp/sirup.log
 ```
 
 ## Social

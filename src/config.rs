@@ -1,26 +1,32 @@
-// This file is part of Sirup, a CLI to spawn pre-authenticated
-// IMAP/SMTP sessions and expose them via Unix sockets.
+// This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
+// sessions and expose them via Unix sockets.
 //
 // Copyright (C) 2026 Clément DOUIN <pimalaya.org@posteo.net>
 //
-// This program is free software: you can redistribute it and/or
-// modify it under the terms of the GNU Affero General Public License
-// as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version.
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version.
 //
-// This program is distributed in the hope that it will be useful, but
-// WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-// Affero General Public License for more details.
+// This program is distributed in the hope that it will be useful, but WITHOUT
+// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
 //
-// You should have received a copy of the GNU Affero General Public
-// License along with this program. If not, see
-// <https://www.gnu.org/licenses/>.
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::{collections::HashMap, env::temp_dir, fs, path::PathBuf};
 
 use log::{error, warn};
-use pimalaya_toolbox::{config::TomlConfig, secret::Secret};
+use pimalaya_config::{
+    secret::{Secret, SecretError},
+    toml::TomlConfig,
+};
+use pimalaya_stream::{
+    sasl::{Sasl, SaslAnonymous, SaslLogin, SaslPlain},
+    tls::{Rustls, RustlsCrypto, Tls, TlsProvider},
+};
 use serde::Deserialize;
 use url::Url;
 
@@ -40,23 +46,6 @@ impl Config {
     }
 }
 
-fn default_socks_dir() -> PathBuf {
-    if let Some(path) = dirs::runtime_dir() {
-        return path;
-    }
-
-    let path = temp_dir().join(format!("service-{}", env!("CARGO_PKG_NAME")));
-    let p = path.display();
-
-    warn!("runtime dir not found, falling back to {p}");
-
-    if let Err(err) = fs::create_dir_all(&path) {
-        error!("cannot create dir {p} ({err}), assuming it already exists");
-    }
-
-    path
-}
-
 impl TomlConfig for Config {
     type Account = AccountConfig;
 
@@ -64,14 +53,12 @@ impl TomlConfig for Config {
         env!("CARGO_PKG_NAME")
     }
 
-    fn find_default_account(&self) -> Option<(String, Self::Account)> {
+    fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
         None
     }
 
-    fn find_account(&self, name: &str) -> Option<(String, Self::Account)> {
-        self.accounts
-            .get(name)
-            .map(|account| (name.to_owned(), account.clone()))
+    fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)> {
+        self.accounts.remove_entry(name)
     }
 }
 
@@ -84,8 +71,7 @@ pub struct AccountConfig {
     pub tls: TlsConfig,
     #[serde(default)]
     pub starttls: bool,
-    #[serde(default)]
-    pub sasl: SaslConfig,
+    pub sasl: Option<SaslConfig>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -117,28 +103,42 @@ pub enum RustlsCryptoConfig {
     Ring,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct SaslConfig {
-    #[serde(default = "SaslConfig::default_mechanisms")]
-    pub mechanisms: Vec<SaslMechanismConfig>,
-    pub login: Option<SaslLoginConfig>,
-    pub plain: Option<SaslPlainConfig>,
-    pub anonymous: Option<SaslAnonymousConfig>,
-}
-
-impl SaslConfig {
-    fn default_mechanisms() -> Vec<SaslMechanismConfig> {
-        vec![SaslMechanismConfig::Plain, SaslMechanismConfig::Login]
+impl From<TlsConfig> for Tls {
+    fn from(config: TlsConfig) -> Self {
+        Tls {
+            provider: config.provider.map(|p| match p {
+                TlsProviderConfig::Rustls => TlsProvider::Rustls,
+                TlsProviderConfig::NativeTls => TlsProvider::NativeTls,
+            }),
+            rustls: Rustls {
+                crypto: config.rustls.crypto.map(|c| match c {
+                    RustlsCryptoConfig::Aws => RustlsCrypto::Aws,
+                    RustlsCryptoConfig::Ring => RustlsCrypto::Ring,
+                }),
+                alpn: Vec::new(),
+            },
+            cert: config.cert,
+        }
     }
 }
 
+/// Per-account SASL configuration.
+///
+/// Exactly one mechanism is selected per account; each variant carries
+/// the credentials for that mechanism. Maps 1:1 to the variants of
+/// [`pimalaya_stream::sasl::Sasl`].
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SaslMechanismConfig {
-    Login,
-    Plain,
-    Anonymous,
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum SaslConfig {
+    Anonymous(SaslAnonymousConfig),
+    Login(SaslLoginConfig),
+    Plain(SaslPlainConfig),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct SaslAnonymousConfig {
+    pub message: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -156,8 +156,38 @@ pub struct SaslPlainConfig {
     pub passwd: Secret,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct SaslAnonymousConfig {
-    pub message: Option<String>,
+impl TryFrom<SaslConfig> for Sasl {
+    type Error = SecretError;
+
+    fn try_from(config: SaslConfig) -> Result<Self, Self::Error> {
+        Ok(match config {
+            SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymous { message: c.message }),
+            SaslConfig::Login(c) => Sasl::Login(SaslLogin {
+                username: c.username,
+                password: c.password.get()?,
+            }),
+            SaslConfig::Plain(c) => Sasl::Plain(SaslPlain {
+                authzid: c.authzid,
+                authcid: c.authcid,
+                passwd: c.passwd.get()?,
+            }),
+        })
+    }
+}
+
+fn default_socks_dir() -> PathBuf {
+    if let Some(path) = dirs::runtime_dir() {
+        return path;
+    }
+
+    let path = temp_dir().join(format!("service-{}", env!("CARGO_PKG_NAME")));
+    let p = path.display();
+
+    warn!("runtime dir not found, falling back to {p}");
+
+    if let Err(err) = fs::create_dir_all(&path) {
+        error!("cannot create dir {p} ({err}), assuming it already exists");
+    }
+
+    path
 }

@@ -76,7 +76,7 @@ rustPlatform.buildRustPackage {
     '';
 
   meta = {
-    description = "CLI to spawn pre-authenticated IMAP sessions and expose them via Unix sockets";
+    description = "CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix sockets";
     mainProgram = "sirup";
     homepage = "https://github.com/pimalaya/sirup";
     changelog = "https://github.com/pimalaya/sirup/blob/v${version}/CHANGELOG.md";

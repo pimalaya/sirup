@@ -17,30 +17,26 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["imap", "smtp", "rustls-ring"]
-
-imap = ["dep:io-imap", "pimalaya-toolbox/imap"]
-smtp = ["dep:io-smtp", "pimalaya-toolbox/smtp"]
-
-native-tls = ["pimalaya-toolbox/native-tls"]
-rustls-aws = ["pimalaya-toolbox/rustls-aws"]
-rustls-ring = ["pimalaya-toolbox/rustls-ring"]
-
-vendored = ["pimalaya-toolbox/vendored"]
+imap = ["dep:io-imap"]
+smtp = ["dep:io-smtp"]
+native-tls  = ["pimalaya-stream/native-tls", "io-imap?/native-tls", "io-smtp?/native-tls"]
+rustls-aws  = ["pimalaya-stream/rustls-aws", "io-imap?/rustls-aws", "io-smtp?/rustls-aws"]
+rustls-ring = ["pimalaya-stream/rustls-ring", "io-imap?/rustls-ring", "io-smtp?/rustls-ring"]
+vendored = ["pimalaya-stream/vendored"]
 
 [build-dependencies]
-pimalaya-toolbox = { version = "0.0.4", default-features = false, features = ["build"] }
+pimalaya-cli = { version = "0.0.1", default-features = false, features = ["build"] }
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 dirs = "6"
-io-imap = { version = "0.0.1", default-features = false, optional = true }
-io-process = { version = "0.0.2", default-features = false, features = ["std"] }
-io-smtp = { version = "0.0.1", default-features = false, features = ["starttls", "ext_auth"], optional = true }
-io-stream = { version = "0.0.2", features = ["std"] }
+io-imap = { version = "0.0.1", default-features = false, features = ["client"], optional = true }
+io-smtp = { version = "0.0.1", default-features = false, features = ["client"], optional = true }
 log = "0.4"
-pimalaya-toolbox = { version = "0.0.4", default-features = false, features = ["config", "terminal", "secret"] }
-secrecy = { version = "0.10", features = ["serde"] }
+pimalaya-cli = { version = "0.0.1", default-features = false, features = ["terminal"] }
+pimalaya-config = { version = "0.0.1", default-features = false, features = ["toml", "secret"] }
+pimalaya-stream = { version = "0.0.1", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 url = { version = "2.2", features = ["serde"] }
 
@@ -48,7 +44,8 @@ url = { version = "2.2", features = ["serde"] }
 uds_windows = "1"
 
 [patch.crates-io]
-io-imap = { git = "https://github.com/pimalaya/io-imap", branch = "io" }
+io-imap.git = "https://github.com/pimalaya/io-imap"
 io-smtp.git = "https://github.com/pimalaya/io-smtp"
-pimalaya-toolbox.git = "https://github.com/pimalaya/toolbox"
-smtp-codec.git = "https://github.com/pimalaya/smtp-codec"
+pimalaya-cli.git = "https://github.com/pimalaya/cli"
+pimalaya-config.git = "https://github.com/pimalaya/config"
+pimalaya-stream.git = "https://github.com/pimalaya/stream"

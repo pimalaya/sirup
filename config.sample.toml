@@ -1,43 +1,74 @@
-# Socket directory for all accounts, defaults to $XDG_RUNTIME_DIR
+# ================================================================================
+# `sirup` configuration file.
+#
+# Loaded from the first valid path among:
+#   - $XDG_CONFIG_HOME/sirup/config.toml
+#   - $HOME/.config/sirup/config.toml
+#   - $HOME/.siruprc
+#
+# Override with `sirup -c <PATH>` or `SIRUP_CONFIG=<PATH>`. Multiple paths can be
+# passed at once, separated by `:`; the first one is the base and the rest are
+# deep-merged on top of it.
+# ================================================================================
+
+# --------------------------------------------------------------------------------
+# Global config
+# --------------------------------------------------------------------------------
+
+# Directory containing all per-account Unix sockets. Defaults to
+# `$XDG_RUNTIME_DIR` (typically `/run/user/<uid>`); falls back to
+# `$TMPDIR/service-sirup` when `$XDG_RUNTIME_DIR` is unset.
 #socks-dir = "/run/user/1000"
 
+# --------------------------------------------------------------------------------
+# Account config
+# --------------------------------------------------------------------------------
+
+# Declare one section per account. Pick one with `sirup start <NAME>` /
+# `sirup repl <NAME>`. Unlike himalaya, sirup has no `default = true`: the
+# account name is always required on the command line.
 [accounts.example]
 
-# Socket file for this account, defaults to $XDG_RUNTIME_DIR/sirup/{account}.sock
-#sock-file = "/run/user/1000/sirup/imap.sock"
+# Socket file for this account, defaults to
+# `<socks-dir>/sirup/<account>.sock`.
+#sock-file = "/run/user/1000/sirup/example.sock"
 
-# URL connection in form (imap|smtp)[s]://host[:port]
-url = "imap://127.0.0.1"
+# URL connection in the form `(imap|smtp)[s]://host[:port]`. The scheme picks
+# the protocol; the `s` suffix selects implicit TLS.
+url = "imaps://example.com"
 
-# TLS provider
-tls.provider = "rustls"
-#tls.provider = "native-tls"
+# TLS provider, defaults to the first available at runtime.
+#tls.provider = "rustls" | "native-tls"
 
-# Crypto provider for rustls
-tls.rustls.crypto = "ring"
-#tls.rustls.crypto = "aws"
+# Crypto provider for rustls, default to first available at runtime.
+#tls.rustls.crypto = "aws" | "ring"
 
-# Custom TLS certificate
+# Custom TLS certificate (extra root, PEM-encoded)
 #tls.cert = "/path/to/custom/cert.pem"
 
-# Enable STARTTLS (when URL scheme is imaps or smtps)
-starttls = false
+# Enable STARTTLS (only valid when the URL scheme is the non-`s` form,
+# i.e. `imap://` or `smtp://`).
+#starttls = false
 
-# SASL mechanisms to try in this particular order
-sasl.mechanisms = ["plain", "login"]
+# --------------------------------------------------------------------------------
+# SASL config
+# --------------------------------------------------------------------------------
+
+# Pick exactly one mechanism among `anonymous`, `login`, `plain`. Omit the
+# whole `sasl` table to skip authentication.
 
 # SASL ANONYMOUS
 # https://datatracker.ietf.org/doc/html/rfc4505
-sasl.anonymous.message = "himalaya"
+#sasl.anonymous.message = "any"
 
 # SASL PLAIN
 # https://datatracker.ietf.org/doc/html/rfc4616
-sasl.plain.authcid = "username"
-sasl.plain.passwd.command = ["mimosa", "password", "read", "example"]
-#sasl.plain.passwd.raw = "***"
+sasl.plain.authcid = "test@example.com"
+sasl.plain.passwd.raw = "***"
+#sasl.plain.passwd.command = ["mimosa", "password", "read", "example"]
 
 # SASL LOGIN
 # https://datatracker.ietf.org/doc/html/draft-murchison-sasl-login-00
-sasl.login.username = "username"
-sasl.login.password.command = ["mimosa", "password", "read", "example"]
+#sasl.login.username = "username"
 #sasl.login.password.raw = "***"
+#sasl.login.password.command = ["mimosa", "password", "read", "example"]
