@@ -1,26 +1,7 @@
 [sources]
-unknown-registry = "deny"
+allow-git = ["https://github.com/pimalaya/cli", "https://github.com/pimalaya/config", "https://github.com/pimalaya/io-imap", "https://github.com/pimalaya/io-smtp", "https://github.com/pimalaya/stream"]
 unknown-git = "deny"
-allow-git = [
-  "https://github.com/pimalaya/cli",
-  "https://github.com/pimalaya/config",
-  "https://github.com/pimalaya/io-imap",
-  "https://github.com/pimalaya/io-smtp",
-  "https://github.com/pimalaya/stream"
-]
+unknown-registry = "deny"
 
 [licenses]
-allow = [
-  "AGPL-3.0-only",
-  "Apache-2.0",
-  "BSD-3-Clause",
-  "CDLA-Permissive-2.0",
-  "ISC",
-  "MIT",
-  "MPL-2.0",
-  "Unicode-3.0",
-  "Zlib"
-]
-
-[licenses.private]
-ignore = true
+allow = ["AGPL-3.0-only", "Apache-2.0", "BSD-3-Clause", "CDLA-Permissive-2.0", "ISC", "MIT", "MPL-2.0", "Unicode-3.0", "Zlib"]
