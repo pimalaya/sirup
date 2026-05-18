@@ -24,7 +24,9 @@ use pimalaya_config::{
     toml::TomlConfig,
 };
 use pimalaya_stream::{
-    sasl::{Sasl, SaslAnonymous, SaslLogin, SaslPlain},
+    sasl::{
+        Sasl, SaslAnonymous, SaslLogin, SaslOauthbearer, SaslPlain, SaslScramSha256, SaslXoauth2,
+    },
     tls::{Rustls, RustlsCrypto, Tls, TlsProvider},
 };
 use serde::Deserialize;
@@ -127,12 +129,20 @@ impl From<TlsConfig> for Tls {
 /// Exactly one mechanism is selected per account; each variant carries
 /// the credentials for that mechanism. Maps 1:1 to the variants of
 /// [`pimalaya_stream::sasl::Sasl`].
+///
+/// `scram-sha-256` only works at runtime when the `scram` cargo feature
+/// is enabled (it propagates to `io-imap`/`io-smtp`); otherwise the
+/// upstream client returns `ScramSha256NotEnabled`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum SaslConfig {
     Anonymous(SaslAnonymousConfig),
     Login(SaslLoginConfig),
     Plain(SaslPlainConfig),
+    Oauthbearer(SaslOauthbearerConfig),
+    Xoauth2(SaslXoauth2Config),
+    #[serde(rename = "scram-sha-256")]
+    ScramSha256(SaslScramSha256Config),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -156,6 +166,29 @@ pub struct SaslPlainConfig {
     pub passwd: Secret,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct SaslOauthbearerConfig {
+    pub username: String,
+    pub host: String,
+    pub port: u16,
+    pub token: Secret,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct SaslXoauth2Config {
+    pub username: String,
+    pub token: Secret,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct SaslScramSha256Config {
+    pub username: String,
+    pub password: Secret,
+}
+
 impl TryFrom<SaslConfig> for Sasl {
     type Error = SecretError;
 
@@ -170,6 +203,20 @@ impl TryFrom<SaslConfig> for Sasl {
                 authzid: c.authzid,
                 authcid: c.authcid,
                 passwd: c.passwd.get()?,
+            }),
+            SaslConfig::Oauthbearer(c) => Sasl::Oauthbearer(SaslOauthbearer {
+                username: c.username,
+                host: c.host,
+                port: c.port,
+                token: c.token.get()?,
+            }),
+            SaslConfig::Xoauth2(c) => Sasl::Xoauth2(SaslXoauth2 {
+                username: c.username,
+                token: c.token.get()?,
+            }),
+            SaslConfig::ScramSha256(c) => Sasl::ScramSha256(SaslScramSha256 {
+                username: c.username,
+                password: c.password.get()?,
             }),
         })
     }

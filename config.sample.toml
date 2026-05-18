@@ -54,8 +54,9 @@ url = "imaps://example.com"
 # SASL config
 # --------------------------------------------------------------------------------
 
-# Pick exactly one mechanism among `anonymous`, `login`, `plain`. Omit the
-# whole `sasl` table to skip authentication.
+# Pick exactly one mechanism among `anonymous`, `login`, `plain`,
+# `oauthbearer`, `xoauth2`, `scram-sha-256`. Omit the whole `sasl` table to
+# skip authentication.
 
 # SASL ANONYMOUS
 # https://datatracker.ietf.org/doc/html/rfc4505
@@ -72,3 +73,25 @@ sasl.plain.passwd.raw = "***"
 #sasl.login.username = "username"
 #sasl.login.password.raw = "***"
 #sasl.login.password.command = ["mimosa", "password", "read", "example"]
+
+# SASL OAUTHBEARER
+# https://datatracker.ietf.org/doc/html/rfc7628
+# The `host`/`port` pair is sent verbatim in the GS2 header and should match
+# the server you actually connect to.
+#sasl.oauthbearer.username = "user@example.com"
+#sasl.oauthbearer.host = "imap.example.com"
+#sasl.oauthbearer.port = 993
+#sasl.oauthbearer.token.raw = "***"
+#sasl.oauthbearer.token.command = ["mimosa", "token", "read", "example"]
+
+# SASL XOAUTH2 (Google's pre-standard OAuth 2.0 SASL mechanism)
+# https://developers.google.com/gmail/imap/xoauth2-protocol
+#sasl.xoauth2.username = "user@example.com"
+#sasl.xoauth2.token.raw = "***"
+#sasl.xoauth2.token.command = ["mimosa", "token", "read", "example"]
+
+# SASL SCRAM-SHA-256 (requires `scram` cargo feature)
+# https://datatracker.ietf.org/doc/html/rfc7677
+#sasl.scram-sha-256.username = "username"
+#sasl.scram-sha-256.password.raw = "***"
+#sasl.scram-sha-256.password.command = ["mimosa", "password", "read", "example"]
