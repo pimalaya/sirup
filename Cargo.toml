@@ -1,7 +1,7 @@
 [package]
 name = "sirup"
 description = "CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix sockets"
-version = "0.0.1"
+version = "0.1.0"
 authors = ["soywod <pimalaya.org@posteo.net>"]
 rust-version = "1.87"
 edition = "2024"
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["imap", "smtp", "rustls-ring"]
+default = ["imap", "smtp", "scram", "rustls-ring"]
 imap = ["dep:io-imap", "pimalaya-cli/imap"]
 smtp = ["dep:io-smtp", "pimalaya-cli/smtp"]
 scram = ["io-imap?/scram", "io-smtp?/scram"]
