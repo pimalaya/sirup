@@ -26,6 +26,12 @@ rustls-aws  = ["pimalaya-stream/rustls-aws", "io-discovery/rustls-aws", "io-imap
 rustls-ring = ["pimalaya-stream/rustls-ring", "io-discovery/rustls-ring", "io-imap?/rustls-ring", "io-smtp?/rustls-ring"]
 vendored = ["pimalaya-stream/vendored"]
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
 [build-dependencies]
 pimalaya-cli = { version = "0.0.1", default-features = false, features = ["build"] }
 
