@@ -16,10 +16,12 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use pimalaya_cli::build::{features_env, git_envs, target_envs};
+//! In-memory, first-run wizard: takes one URL/email/domain input,
+//! probes PACC → Autoconfig → SRV for the server endpoints, then
+//! prompts for SASL credentials. Returns a single in-memory
+//! [`crate::config::AccountConfig`]; no on-disk config is written.
 
-fn main() {
-    features_env(include_str!("./Cargo.toml"));
-    target_envs();
-    git_envs();
-}
+pub mod autoconfig;
+pub mod discover;
+pub mod pacc;
+pub mod srv;

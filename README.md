@@ -16,114 +16,87 @@ CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix socke
 
 ## Features
 
-- **IMAP** support (requires `imap` cargo feature)
-- **SMTP** support (requires `smtp` cargo feature)
+- Remote backend support: **IMAP**, **SMTP**, **JMAP**
+- **Simple auth** support for IMAP/SMTP: anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256
+- **HTTP auth** support for JMAP: basic, bearer
 - **TLS** support:
-  - [native-tls](https://crates.io/crates/native-tls) (requires `native-tls` feature)
-  - [rustls](https://crates.io/crates/rustls):
-    - AWS-LC crypto provider (requires `rustls-aws` feature)
-    - Ring crypto provider (requires `rustls-ring` feature)
-- **SASL** support:
-  - ANONYMOUS <sup>[rfc4505](https://www.iana.org/go/rfc4505)</sup>
-  - LOGIN <sup>[draft](https://datatracker.ietf.org/doc/html/draft-murchison-sasl-login-00)</sup>
-  - PLAIN <sup>[rfc4616](https://www.iana.org/go/rfc4616)</sup>
-  - OAUTHBEARER <sup>[rfc7628](https://www.iana.org/go/rfc7628)</sup>
-  - XOAUTH2 <sup>[google](https://developers.google.com/gmail/imap/xoauth2-protocol)</sup>
-  - SCRAM-SHA-256 <sup>[rfc7677](https://www.iana.org/go/rfc7677)</sup> (requires the `scram` cargo feature)
-- Pre-authenticated IMAP/SMTP session proxied to a Unix socket via `sirup start <account>`
-- REPL that interacts with the Unix-socket-backed session via `sirup repl <account>`
+  - [Rustls](https://crates.io/crates/rustls) with ring crypto
+  - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
+  - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
+- **Discovery** support:
+  - Autoconfiguration (Thunderbird) <sup>[specs](https://wiki.mozilla.org/Thunderbird:Autoconfiguration)</sup>
+  - PACC <sup>[specs](https://datatracker.ietf.org/doc/html/draft-ietf-mailmaint-pacc)</sup>
+  - SRV DNS lookups <sup>[rfc6186](https://datatracker.ietf.org/doc/html/rfc6186)</sup>
+- Pre-authenticated IMAP/SMTP session proxied to a Unix socket via `sirup start`
+- REPL that interacts with the Unix-socket-backed session via `sirup repl`
 - Partial **JSON** support with `--json`
 
-*Sirup CLI is written in [Rust](https://www.rust-lang.org/), and relies on [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to enable or disable functionalities. Default features can be found in the `features` section of the [`Cargo.toml`](https://github.com/pimalaya/sirup/blob/master/Cargo.toml), or on [docs.rs](https://docs.rs/crate/sirup/latest/features).*
+> [!TIP]
+> Sirup is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml).
 
 ## Installation
 
 ### Pre-built binary
 
-Sirup CLI can be installed with the installer:
+Sirup is not yet released, therefore the only way to get a pre-built binary is to check out the [releases](https://github.com/pimalaya/sirup/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section.
 
-*As root:*
-
-```
-curl -sSL https://raw.githubusercontent.com/pimalaya/sirup/master/install.sh | sudo sh
-```
-
-*As a regular user:*
-
-```
-curl -sSL https://raw.githubusercontent.com/pimalaya/sirup/master/install.sh | PREFIX=~/.local sh
-```
-
-These commands install the latest binary from the GitHub [releases](https://github.com/pimalaya/sirup/releases) section.
-
-If you want a more up-to-date version than the latest release, check out the [releases](https://github.com/pimalaya/sirup/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section. You should find a pre-built binary matching your OS. These pre-built binaries are built from the `master` branch, using default features.
-
-### Cargo
-
-Sirup CLI can be installed with [cargo](https://doc.rust-lang.org/cargo/):
-
-```
-cargo install sirup
-```
-
-You can also use the git repository for a more up-to-date (but less stable) version:
+> [!NOTE]
+> Such binaries are built with the default cargo features. If you need specific features, please use another installation method.
 
 ```
 cargo install --locked --git https://github.com/pimalaya/sirup.git
 ```
 
+With only IMAP support:
+
+```
+cargo install --locked --git https://github.com/pimalaya/sirup.git \
+  --no-default-features \
+  --features imap,rustls-ring
+```
+
 ### Nix
-
-Sirup CLI can be installed with [Nix](https://serokell.io/blog/what-is-nix):
-
-```
-nix-env -i sirup
-```
-
-You can also use the git repository for a more up-to-date (but less stable) version:
-
-```
-nix-env -if https://github.com/pimalaya/sirup/archive/master.tar.gz
-```
-
-*Or, from within the source tree checkout:*
-
-```
-nix-env -if .
-```
 
 If you have the [Flakes](https://nixos.wiki/wiki/Flakes) feature enabled:
 
 ```
-nix profile install sirup
+nix profile install github:pimalaya/sirup
 ```
 
-*Or, from within the source tree checkout:*
+Or run without installing:
 
 ```
-nix profile install
+nix run github:pimalaya/sirup
 ```
 
-*You can also run Sirup directly without installing it:*
+### Sources
 
 ```
-nix run sirup
+git clone https://github.com/pimalaya/sirup
+cd sirup
+nix run
 ```
 
 ## Configuration
 
-The wizard is not yet available (it should come soon), meanwhile you can manually edit your own configuration from scratch:
+Run `sirup`. With no configuration file on disk the wizard prompts for an email address, a server URL or a bare domain, runs provider discovery, asks for SASL credentials, then keeps the resulting account in memory for that session only (Sirup does not write to disk).
 
-- Copy the content of the documented [config.sample.toml](./config.sample.toml)
-- Paste it into a new file `~/.config/sirup/config.toml`
-- Edit, then comment or uncomment the options you want
+A persistent configuration is loaded from the first valid path among:
+
+- `$XDG_CONFIG_HOME/sirup/config.toml`
+- `$HOME/.config/sirup/config.toml`
+- `$HOME/.siruprc`
+
+Override the path with `-c <PATH>` or `SIRUP_CONFIG=<PATH>`; multiple paths can be passed at once, separated by `:`. The first one is the base and the rest are deep-merged on top.
+
+Pass `--no-config` to ignore both, even when a file is present: useful for testing another account in memory without exposing stored credentials.
 
 ## Usage
 
 ### Start a pre-authenticated session
 
 ```
-$ sirup start <account>
+$ sirup start [--account <name>]
 ```
 
 This command spawns a blocking daemon that connects to your IMAP or SMTP server (depending on the account's URL scheme), performs the TLS negociations if necessary, authenticates you, then exposes this session via a Unix socket.
@@ -140,7 +113,7 @@ The IMAP `EHLO`-equivalent capability list reflects whatever the upstream server
 ### Launch a REPL
 
 ```
-$ sirup repl <account>
+$ sirup repl [--account <name>]
 
 S: * PREAUTH [CAPABILITY…] Sirup IMAP pre-auth session ready
 

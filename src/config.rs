@@ -1,28 +1,26 @@
 // This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
 // sessions and expose them via Unix sockets.
 //
-// Copyright (C) 2026 Clément DOUIN <pimalaya.org@posteo.net>
+// Copyright (C) 2026  soywod <pimalaya.org@posteo.net>
 //
-// This program is free software: you can redistribute it and/or modify it under
-// the terms of the GNU Affero General Public License as published by the Free
-// Software Foundation, either version 3 of the License, or (at your option) any
-// later version.
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
 //
-// This program is distributed in the hope that it will be useful, but WITHOUT
-// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
-// details.
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
 //
 // You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{collections::HashMap, env::temp_dir, fs, path::PathBuf};
 
+use anyhow::Result;
 use log::{error, warn};
-use pimalaya_config::{
-    secret::{Secret, SecretError},
-    toml::TomlConfig,
-};
+use pimalaya_config::{secret::Secret, toml::TomlConfig};
 use pimalaya_stream::{
     sasl::{
         Sasl, SaslAnonymous, SaslLogin, SaslOauthbearer, SaslPlain, SaslScramSha256, SaslXoauth2,
@@ -46,6 +44,18 @@ impl Config {
             .join(env!("CARGO_PKG_NAME"))
             .join(format!("{account_name}.sock"))
     }
+
+    /// Minimal in-memory [`Config`] used as the host for a wizard-built
+    /// [`AccountConfig`]. Only [`Config::socks_dir`] is populated (with
+    /// the same default the on-disk config would have inferred);
+    /// [`Config::accounts`] stays empty since the wizard never writes
+    /// to disk.
+    pub fn default_for_wizard() -> Self {
+        Self {
+            socks_dir: default_socks_dir(),
+            accounts: HashMap::new(),
+        }
+    }
 }
 
 impl TomlConfig for Config {
@@ -55,18 +65,25 @@ impl TomlConfig for Config {
         env!("CARGO_PKG_NAME")
     }
 
-    fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
-        None
-    }
-
     fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)> {
         self.accounts.remove_entry(name)
+    }
+
+    fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
+        let name = self
+            .accounts
+            .iter()
+            .find_map(|(name, account)| account.default.then(|| name.clone()))?;
+
+        self.take_named_account(&name)
     }
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AccountConfig {
+    #[serde(default)]
+    pub default: bool,
     pub sock_file: Option<PathBuf>,
     pub url: Url,
     #[serde(default)]
@@ -170,8 +187,6 @@ pub struct SaslPlainConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslOauthbearerConfig {
     pub username: String,
-    pub host: String,
-    pub port: u16,
     pub token: Secret,
 }
 
@@ -189,11 +204,9 @@ pub struct SaslScramSha256Config {
     pub password: Secret,
 }
 
-impl TryFrom<SaslConfig> for Sasl {
-    type Error = SecretError;
-
-    fn try_from(config: SaslConfig) -> Result<Self, Self::Error> {
-        Ok(match config {
+impl SaslConfig {
+    pub fn try_into_sasl(self, host: impl ToString, port: u16) -> Result<Sasl> {
+        Ok(match self {
             SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymous { message: c.message }),
             SaslConfig::Login(c) => Sasl::Login(SaslLogin {
                 username: c.username,
@@ -206,8 +219,8 @@ impl TryFrom<SaslConfig> for Sasl {
             }),
             SaslConfig::Oauthbearer(c) => Sasl::Oauthbearer(SaslOauthbearer {
                 username: c.username,
-                host: c.host,
-                port: c.port,
+                host: host.to_string(),
+                port,
                 token: c.token.get()?,
             }),
             SaslConfig::Xoauth2(c) => Sasl::Xoauth2(SaslXoauth2 {

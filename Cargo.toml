@@ -2,7 +2,7 @@
 name = "sirup"
 description = "CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix sockets"
 version = "0.0.1"
-authors = ["Clément DOUIN <pimalaya.org@posteo.net>"]
+authors = ["soywod <pimalaya.org@posteo.net>"]
 rust-version = "1.87"
 edition = "2024"
 license = "AGPL-3.0-only"
@@ -18,12 +18,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["imap", "smtp", "rustls-ring"]
-imap = ["dep:io-imap"]
-smtp = ["dep:io-smtp"]
+imap = ["dep:io-imap", "pimalaya-cli/imap"]
+smtp = ["dep:io-smtp", "pimalaya-cli/smtp"]
 scram = ["io-imap?/scram", "io-smtp?/scram"]
-native-tls  = ["pimalaya-stream/native-tls", "io-imap?/native-tls", "io-smtp?/native-tls"]
-rustls-aws  = ["pimalaya-stream/rustls-aws", "io-imap?/rustls-aws", "io-smtp?/rustls-aws"]
-rustls-ring = ["pimalaya-stream/rustls-ring", "io-imap?/rustls-ring", "io-smtp?/rustls-ring"]
+native-tls  = ["pimalaya-stream/native-tls", "io-discovery/native-tls", "io-imap?/native-tls", "io-smtp?/native-tls"]
+rustls-aws  = ["pimalaya-stream/rustls-aws", "io-discovery/rustls-aws", "io-imap?/rustls-aws", "io-smtp?/rustls-aws"]
+rustls-ring = ["pimalaya-stream/rustls-ring", "io-discovery/rustls-ring", "io-imap?/rustls-ring", "io-smtp?/rustls-ring"]
 vendored = ["pimalaya-stream/vendored"]
 
 [build-dependencies]
@@ -33,19 +33,33 @@ pimalaya-cli = { version = "0.0.1", default-features = false, features = ["build
 anyhow = "1"
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 dirs = "6"
+io-discovery = { version = "0.1", default-features = false, features = ["pacc", "autoconfig", "rfc6186", "client"] }
 io-imap = { version = "0.0.1", default-features = false, features = ["client"], optional = true }
 io-smtp = { version = "0.0.1", default-features = false, features = ["client"], optional = true }
 log = "0.4"
-pimalaya-cli = { version = "0.0.1", default-features = false, features = ["terminal"] }
+pimalaya-cli = { version = "0.0.1", default-features = false, features = ["prompt", "spinner", "terminal", "wizard"] }
 pimalaya-config = { version = "0.0.1", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.0.1", default-features = false, features = ["std"] }
+secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 url = { version = "2.2", features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
 uds_windows = "1"
 
+# [patch.crates-io]
+# io-discovery.path = "../io-discovery"
+# io-http.path = "../io-http"
+# io-imap.path = "../io-imap"
+# io-smtp.path = "../io-smtp"
+# pimalaya-cli.path = "../cli"
+# pimalaya-config.path = "../config"
+# pimalaya-stream.path = "../stream"
+
 [patch.crates-io]
+domain = { git = "https://github.com/soywod/domain", branch = "new-srv" }
+io-discovery.git = "https://github.com/pimalaya/io-discovery"
+io-http.git = "https://github.com/pimalaya/io-http"
 io-imap.git = "https://github.com/pimalaya/io-imap"
 io-smtp.git = "https://github.com/pimalaya/io-smtp"
 pimalaya-cli.git = "https://github.com/pimalaya/cli"

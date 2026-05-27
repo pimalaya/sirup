@@ -64,6 +64,7 @@ url = "imaps://example.com"
 
 # SASL PLAIN
 # https://datatracker.ietf.org/doc/html/rfc4616
+#sasl.plain.authzid = "authzid"
 sasl.plain.authcid = "test@example.com"
 sasl.plain.passwd.raw = "***"
 #sasl.plain.passwd.command = ["mimosa", "password", "read", "example"]

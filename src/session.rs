@@ -1,20 +1,20 @@
 // This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
 // sessions and expose them via Unix sockets.
 //
-// Copyright (C) 2026 Clément DOUIN <pimalaya.org@posteo.net>
+// Copyright (C) 2026  soywod <pimalaya.org@posteo.net>
 //
-// This program is free software: you can redistribute it and/or modify it under
-// the terms of the GNU Affero General Public License as published by the Free
-// Software Foundation, either version 3 of the License, or (at your option) any
-// later version.
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
 //
-// This program is distributed in the hope that it will be useful, but WITHOUT
-// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
-// details.
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
 //
 // You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #[cfg(feature = "smtp")]
 use std::net::Ipv4Addr;
@@ -27,13 +27,13 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 #[cfg(feature = "imap")]
 use io_imap::{
     client::ImapClientStd,
     codec::{
-        encode::{Encoder, Fragment},
         GreetingCodec,
+        encode::{Encoder, Fragment},
     },
     types::{
         core::Vec1,
@@ -43,6 +43,7 @@ use io_imap::{
 #[cfg(feature = "smtp")]
 use io_smtp::{client::SmtpClientStd, rfc5321::types::ehlo_domain::EhloDomain};
 use log::{info, warn};
+use pimalaya_cli::spinner::Spinner;
 #[cfg(any(feature = "imap", feature = "smtp"))]
 use pimalaya_stream::std::stream::StreamStd;
 use pimalaya_stream::{sasl::Sasl, tls::Tls};
@@ -122,6 +123,7 @@ pub fn start(
     starttls: bool,
     sasl: Option<Sasl>,
 ) -> Result<()> {
+    let s = Spinner::start("Starting remote session");
     let mut conn = match url.scheme() {
         #[cfg(feature = "imap")]
         #[cfg(any(
@@ -131,24 +133,32 @@ pub fn start(
         ))]
         "imap" | "imaps" => Session::Imap(ImapClientStd::connect(&url, &tls, starttls, sasl)?),
         #[cfg(feature = "smtp")]
+        #[cfg(any(
+            feature = "rustls-ring",
+            feature = "rustls-aws",
+            feature = "native-tls"
+        ))]
         "smtp" | "smtps" => {
             let domain: EhloDomain<'static> = Ipv4Addr::new(127, 0, 0, 1).into();
             Session::Smtp(SmtpClientStd::connect(&url, &tls, starttls, domain, sasl)?)
         }
 
         #[cfg(not(feature = "imap"))]
-        "imap" | "imaps" => bail!("missing cargo feature: `imap`"),
+        "imap" | "imaps" => bail!("Missing cargo feature: `imap`"),
         #[cfg(not(feature = "smtp"))]
-        "smtp" | "smtps" => bail!("missing cargo feature: `smtp`"),
+        "smtp" | "smtps" => bail!("Missing cargo feature: `smtp`"),
         #[cfg(not(feature = "rustls-aws"))]
         #[cfg(not(feature = "rustls-ring"))]
         #[cfg(not(feature = "native-tls"))]
         _ => {
-            bail!("missing cargo feature: `rustls-aws`, `rustls-ring` or `native-tls`")
+            bail!("Missing cargo feature: `rustls-aws`, `rustls-ring` or `native-tls`")
         }
 
-        s => bail!("unknown scheme `{s}`, expects `imap(s)` or `smtp(s)`"),
+        s => bail!("Unknown scheme `{s}`, expects `imap(s)` or `smtp(s)`"),
     };
+    s.success("Starting remote session");
+
+    let s = Spinner::start("Binding local socket");
 
     // Remove stale socket file from a previous run
     if sock_path.exists() {
@@ -160,10 +170,14 @@ pub fn start(
     }
 
     let listener = UnixListener::bind(&sock_path)?;
+    s.success("Binding local socket");
 
+    let mut s = Spinner::start("Waiting for connection");
     for incoming in listener.incoming() {
         let mut client = incoming?;
         info!("client connected");
+        s.success("Connection established");
+        s = Spinner::start("Holding connection");
 
         // Send protocol-specific greeting
         match &conn {
@@ -200,12 +214,16 @@ pub fn start(
 
         // Proxy bidirectionally between client and server
         match proxy(&mut conn, &mut client) {
-            Ok(()) => info!("client disconnected"),
+            Ok(()) => {
+                s.failure("Disconnected");
+                s = Spinner::start("Waiting for connection");
+                info!("client disconnected")
+            }
             Err(err) => warn!("proxy error: {err}"),
         }
     }
 
-    let _ = fs::remove_file(&sock_path);
+    fs::remove_file(&sock_path).ok();
     Ok(())
 }
 
