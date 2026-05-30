@@ -37,7 +37,7 @@ use io_imap::{
     },
     types::{
         core::Vec1,
-        response::{Code, Greeting},
+        response::{Capability, Code, Greeting},
     },
 };
 #[cfg(feature = "smtp")]
@@ -51,28 +51,45 @@ use pimalaya_stream::{sasl::Sasl, tls::Tls};
 use uds_windows::{UnixListener, UnixStream};
 use url::Url;
 
-#[derive(Debug)]
 pub enum Session {
     #[cfg(feature = "imap")]
-    Imap(ImapClientStd<StreamStd>),
+    Imap {
+        client: ImapClientStd,
+        capability: Vec<Capability<'static>>,
+    },
     #[cfg(feature = "smtp")]
-    Smtp(SmtpClientStd<StreamStd>),
+    Smtp(SmtpClientStd),
     #[cfg(not(feature = "imap"))]
     #[cfg(not(feature = "smtp"))]
     Invalid,
 }
 
 impl Session {
-    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
-        match self {
+    /// Sets the read timeout on the underlying authenticated stream.
+    ///
+    /// Both protocol clients box the stream as `Box<dyn ImapStream>` /
+    /// `Box<dyn SmtpStream>`; we downcast back to [`StreamStd`] (the
+    /// only concrete type Sirup ever stores) to reach the inherent
+    /// [`StreamStd::set_read_timeout`] method.
+    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        let stream: &mut StreamStd = match self {
             #[cfg(feature = "imap")]
-            Self::Imap(client) => client.stream().set_read_timeout(timeout),
+            Self::Imap { client, .. } => client
+                .stream
+                .as_any_mut()
+                .downcast_mut::<StreamStd>()
+                .expect("Sirup IMAP stream is always StreamStd"),
             #[cfg(feature = "smtp")]
-            Self::Smtp(client) => client.stream().set_read_timeout(timeout),
+            Self::Smtp(client) => client
+                .stream
+                .as_any_mut()
+                .downcast_mut::<StreamStd>()
+                .expect("Sirup SMTP stream is always StreamStd"),
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
-            Self::Invalid => Ok(()),
-        }
+            Self::Invalid => return Ok(()),
+        };
+        stream.set_read_timeout(timeout)
     }
 }
 
@@ -80,9 +97,9 @@ impl Read for Session {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             #[cfg(feature = "imap")]
-            Self::Imap(client) => client.stream_mut().read(buf),
+            Self::Imap { client, .. } => client.stream.read(buf),
             #[cfg(feature = "smtp")]
-            Self::Smtp(client) => client.stream_mut().read(buf),
+            Self::Smtp(client) => client.stream.read(buf),
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
             Self::Invalid => Ok(0),
@@ -94,9 +111,9 @@ impl Write for Session {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             #[cfg(feature = "imap")]
-            Self::Imap(client) => client.stream_mut().write(buf),
+            Self::Imap { client, .. } => client.stream.write(buf),
             #[cfg(feature = "smtp")]
-            Self::Smtp(client) => client.stream_mut().write(buf),
+            Self::Smtp(client) => client.stream.write(buf),
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
             Self::Invalid => Ok(0),
@@ -106,9 +123,9 @@ impl Write for Session {
     fn flush(&mut self) -> io::Result<()> {
         match self {
             #[cfg(feature = "imap")]
-            Self::Imap(client) => client.stream_mut().flush(),
+            Self::Imap { client, .. } => client.stream.flush(),
             #[cfg(feature = "smtp")]
-            Self::Smtp(client) => client.stream_mut().flush(),
+            Self::Smtp(client) => client.stream.flush(),
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
             Self::Invalid => Ok(()),
@@ -131,7 +148,10 @@ pub fn start(
             feature = "rustls-aws",
             feature = "native-tls"
         ))]
-        "imap" | "imaps" => Session::Imap(ImapClientStd::connect(&url, &tls, starttls, sasl)?),
+        "imap" | "imaps" => {
+            let (client, capability) = ImapClientStd::connect(&url, &tls, starttls, sasl)?;
+            Session::Imap { client, capability }
+        }
         #[cfg(feature = "smtp")]
         #[cfg(any(
             feature = "rustls-ring",
@@ -182,12 +202,8 @@ pub fn start(
         // Send protocol-specific greeting
         match &conn {
             #[cfg(feature = "imap")]
-            Session::Imap(imap) => {
-                let caps = imap
-                    .context()
-                    .map(|ctx| ctx.capability.clone())
-                    .unwrap_or_default();
-                let capability = Vec1::unvalidated(caps);
+            Session::Imap { capability, .. } => {
+                let capability = Vec1::unvalidated(capability.clone());
                 let greeting = Greeting::preauth(
                     Some(Code::Capability(capability)),
                     "Sirup IMAP pre-auth session ready",
