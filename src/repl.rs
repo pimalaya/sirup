@@ -16,6 +16,25 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::path::PathBuf;
+
+use anyhow::{Result, bail};
+use url::Url;
+
+pub fn start(sock_path: PathBuf, url: Url) -> Result<()> {
+    match url.scheme() {
+        #[cfg(feature = "imap")]
+        "imap" | "imaps" => imap::start(sock_path),
+        #[cfg(not(feature = "imap"))]
+        "imap" | "imaps" => bail!("Missing cargo feature: `imap`"),
+        #[cfg(feature = "smtp")]
+        "smtp" | "smtps" => smtp::start(sock_path),
+        #[cfg(not(feature = "smtp"))]
+        "smtp" | "smtps" => bail!("Missing cargo feature: `smtp`"),
+        s => bail!("Unknown scheme `{s}`, expects `imap(s)` or `smtp(s)`"),
+    }
+}
+
 #[cfg(feature = "imap")]
 pub mod imap {
     #[cfg(unix)]

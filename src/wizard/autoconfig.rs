@@ -23,7 +23,7 @@
 //! [`DiscoveryResult`] shape consumed by the discovery chain.
 
 use io_discovery::autoconfig::{
-    client::DiscoveryAutoconfigClientStd,
+    client::{DiscoveryAutoconfigClientStd, DiscoveryAutoconfigClientStdError},
     types::{Autoconfig, SecurityType, Server, ServerType},
 };
 use log::debug;
@@ -59,10 +59,7 @@ fn run_probe<F>(label: &str, domain: &str, op: F) -> Option<Autoconfig>
 where
     F: Fn(
         &mut DiscoveryAutoconfigClientStd,
-    ) -> Result<
-        Autoconfig,
-        io_discovery::autoconfig::client::DiscoveryAutoconfigClientStdError,
-    >,
+    ) -> Result<Autoconfig, DiscoveryAutoconfigClientStdError>,
 {
     let mut client =
         DiscoveryAutoconfigClientStd::new(discovery_resolver()).with_tls(discovery_tls());

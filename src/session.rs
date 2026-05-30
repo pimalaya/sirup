@@ -24,7 +24,8 @@ use std::{
     fs,
     io::{self, Read, Write},
     path::PathBuf,
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, bail};
@@ -90,6 +91,19 @@ impl Session {
             Self::Invalid => return Ok(()),
         };
         stream.set_read_timeout(timeout)
+    }
+
+    /// Sends a protocol-level NOOP to keep the upstream session alive.
+    pub fn noop(&mut self) -> Result<()> {
+        match self {
+            #[cfg(feature = "imap")]
+            Self::Imap { client, .. } => Ok(client.noop()?),
+            #[cfg(feature = "smtp")]
+            Self::Smtp(client) => Ok(client.noop()?),
+            #[cfg(not(feature = "imap"))]
+            #[cfg(not(feature = "smtp"))]
+            Self::Invalid => Ok(()),
+        }
     }
 }
 
@@ -190,11 +204,34 @@ pub fn start(
     }
 
     let listener = UnixListener::bind(&sock_path)?;
+    listener.set_nonblocking(true)?;
     s.success("Binding local socket");
 
+    // NOOP cadence: under both the IMAP 30 min server-side minimum
+    // (RFC 3501 §5.4) and the SMTP 5 min receiver timeout (RFC 5321
+    // §4.5.3.2.7), with margin for slow round-trips.
+    const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(4 * 60);
+    const ACCEPT_POLL: Duration = Duration::from_millis(200);
+    let mut last_keepalive = Instant::now();
+
     let mut s = Spinner::start("Waiting for connection");
-    for incoming in listener.incoming() {
-        let mut client = incoming?;
+    loop {
+        let (mut client, _) = match listener.accept() {
+            Ok(pair) => pair,
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                if last_keepalive.elapsed() >= KEEPALIVE_INTERVAL {
+                    conn.set_read_timeout(None)?;
+                    if let Err(err) = conn.noop() {
+                        warn!("keepalive NOOP failed: {err}");
+                        bail!(err);
+                    }
+                    last_keepalive = Instant::now();
+                }
+                thread::sleep(ACCEPT_POLL);
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
         info!("client connected");
         s.success("Connection established");
         s = Spinner::start("Holding connection");
@@ -237,10 +274,10 @@ pub fn start(
             }
             Err(err) => warn!("proxy error: {err}"),
         }
-    }
 
-    fs::remove_file(&sock_path).ok();
-    Ok(())
+        // Real client traffic counts as keepalive
+        last_keepalive = Instant::now();
+    }
 }
 
 fn proxy(server: &mut Session, client: &mut UnixStream) -> Result<()> {

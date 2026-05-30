@@ -134,7 +134,19 @@ impl Command {
                 let (default_sock_path, mut account_config) =
                     load_or_wizard(config_paths, account.name.as_deref(), no_account)?;
                 let sock_path = account_config.sock_file.take().unwrap_or(default_sock_path);
-                start_session(sock_path, account_config)
+                let url = account_config.url;
+                let tls = account_config.tls.into();
+                let starttls = account_config.starttls;
+                let sasl = account_config
+                    .sasl
+                    .and_then(|cfg| {
+                        let host = url.host_str()?;
+                        let port = url.port_or_known_default()?;
+                        Some(cfg.try_into_sasl(host, port))
+                    })
+                    .transpose()?;
+
+                session::start(sock_path, url, tls, starttls, sasl)
             }
 
             Command::Repl { account } => {
@@ -142,39 +154,13 @@ impl Command {
                     load_or_wizard(config_paths, account.name.as_deref(), no_account)?;
                 let sock_path = account_config.sock_file.unwrap_or(default_sock_path);
 
-                match account_config.url.scheme() {
-                    #[cfg(feature = "imap")]
-                    "imap" | "imaps" => repl::imap::start(sock_path),
-                    #[cfg(not(feature = "imap"))]
-                    "imap" | "imaps" => bail!("Missing cargo feature: `imap`"),
-                    #[cfg(feature = "smtp")]
-                    "smtp" | "smtps" => repl::smtp::start(sock_path),
-                    #[cfg(not(feature = "smtp"))]
-                    "smtp" | "smtps" => bail!("Missing cargo feature: `smtp`"),
-                    s => bail!("Unknown scheme `{s}`, expects `imap(s)` or `smtp(s)`"),
-                }
+                repl::start(sock_path, account_config.url)
             }
 
             Command::Manuals(cmd) => cmd.execute(printer, Cli::command()),
             Command::Completions(cmd) => cmd.execute(printer, Cli::command()),
         }
     }
-}
-
-fn start_session(sock_path: PathBuf, account_config: AccountConfig) -> Result<()> {
-    let url = account_config.url;
-    let tls = account_config.tls.into();
-    let starttls = account_config.starttls;
-    let sasl = account_config
-        .sasl
-        .and_then(|cfg| {
-            let host = url.host_str()?;
-            let port = url.port_or_known_default()?;
-            Some(cfg.try_into_sasl(host, port))
-        })
-        .transpose()?;
-
-    session::start(sock_path, url, tls, starttls, sasl)
 }
 
 /// Resolves the per-account sock path + AccountConfig pair for the
@@ -213,15 +199,11 @@ fn wizard_run() -> Result<AccountConfig> {
     wizard::discover::run()
 }
 
-#[cfg(not(all(
-    feature = "imap",
-    feature = "smtp",
-    any(
-        feature = "rustls-ring",
-        feature = "rustls-aws",
-        feature = "native-tls"
-    )
-)))]
+#[cfg(not(feature = "imap"))]
+#[cfg(not(feature = "smtp"))]
+#[cfg(not(feature = "rustls-ring"))]
+#[cfg(not(feature = "rustls-aws"))]
+#[cfg(not(feature = "native-tls"))]
 fn wizard_run() -> Result<AccountConfig> {
     bail!(
         "No config file found, and the wizard requires the `imap`, `smtp` \
