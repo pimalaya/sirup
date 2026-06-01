@@ -22,10 +22,6 @@
 //! a successful [`Autoconfig`] into the IMAP/SMTP-only
 //! [`DiscoveryResult`] shape consumed by the discovery chain.
 
-use io_discovery::autoconfig::{
-    client::{DiscoveryAutoconfigClientStd, DiscoveryAutoconfigClientStdError},
-    types::{Autoconfig, SecurityType, Server, ServerType},
-};
 use log::debug;
 use pimalaya_cli::{
     spinner::Spinner,
@@ -33,6 +29,10 @@ use pimalaya_cli::{
         imap::{Encryption as ImapEncryption, ImapAuth, ImapSecret, WizardImapConfig},
         smtp::{Encryption as SmtpEncryption, SmtpAuth, SmtpSecret, WizardSmtpConfig},
     },
+};
+use pimconf::autoconfig::{
+    client::{DiscoveryAutoconfigClientStd, DiscoveryAutoconfigClientStdError},
+    types::{Autoconfig, SecurityType, Server, ServerType},
 };
 
 use crate::wizard::discover::{DiscoveryResult, discovery_resolver, discovery_tls};

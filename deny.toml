@@ -2,10 +2,10 @@
 allow-git = [
   "https://github.com/pimalaya/cli",
   "https://github.com/pimalaya/config",
-  "https://github.com/pimalaya/io-discovery",
   "https://github.com/pimalaya/io-http",
   "https://github.com/pimalaya/io-imap",
   "https://github.com/pimalaya/io-smtp",
+  "https://github.com/pimalaya/pimconf",
   "https://github.com/pimalaya/stream",
   "https://github.com/soywod/domain",
   "https://github.com/soywod/imap-codec",

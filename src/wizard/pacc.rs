@@ -20,7 +20,6 @@
 //! JMAP endpoint reported by PACC is ignored since sirup speaks only
 //! the SASL-mediated mail protocols.
 
-use io_discovery::pacc::{client::DiscoveryPaccClientStd, types::PaccConfig};
 use log::debug;
 use pimalaya_cli::{
     spinner::Spinner,
@@ -29,6 +28,7 @@ use pimalaya_cli::{
         smtp::{Encryption as SmtpEncryption, SmtpAuth, SmtpSecret, WizardSmtpConfig},
     },
 };
+use pimconf::pacc::{client::DiscoveryPaccClientStd, types::PaccConfig};
 
 use crate::wizard::discover::{DiscoveryResult, discovery_resolver, discovery_tls};
 

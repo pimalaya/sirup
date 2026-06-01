@@ -90,6 +90,13 @@ pub struct AccountConfig {
     pub tls: TlsConfig,
     #[serde(default)]
     pub starttls: bool,
+    /// ALPN protocol identifiers offered during the TLS handshake.
+    /// `None` (field omitted) infers a sensible default from the URL
+    /// scheme: `["imap"]` for `imap[s]://`, `["smtp"]` for
+    /// `smtp[s]://`. `Some([])` disables ALPN entirely; `Some(["x"])`
+    /// overrides with a custom list. Only relevant for the rustls
+    /// provider; `native-tls` ignores ALPN.
+    pub alpn: Option<Vec<String>>,
     pub sasl: Option<SaslConfig>,
 }
 
@@ -122,21 +129,26 @@ pub enum RustlsCryptoConfig {
     Ring,
 }
 
-impl From<TlsConfig> for Tls {
-    fn from(config: TlsConfig) -> Self {
+impl TlsConfig {
+    /// Builds the runtime [`Tls`] handle the connect helpers expect.
+    /// `alpn` is the protocol-level ALPN list (e.g. `["imap"]`,
+    /// `["smtp"]`); pass an empty vec to skip ALPN. The TOML schema
+    /// never exposes `tls.rustls.alpn` directly: the account-level
+    /// `alpn` field is folded in here.
+    pub fn into_tls(self, alpn: Vec<String>) -> Tls {
         Tls {
-            provider: config.provider.map(|p| match p {
+            provider: self.provider.map(|p| match p {
                 TlsProviderConfig::Rustls => TlsProvider::Rustls,
                 TlsProviderConfig::NativeTls => TlsProvider::NativeTls,
             }),
             rustls: Rustls {
-                crypto: config.rustls.crypto.map(|c| match c {
+                crypto: self.rustls.crypto.map(|c| match c {
                     RustlsCryptoConfig::Aws => RustlsCrypto::Aws,
                     RustlsCryptoConfig::Ring => RustlsCrypto::Ring,
                 }),
-                alpn: Vec::new(),
+                alpn,
             },
-            cert: config.cert,
+            cert: self.cert,
         }
     }
 }
@@ -179,7 +191,9 @@ pub struct SaslLoginConfig {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslPlainConfig {
     pub authzid: Option<String>,
+    #[serde(alias = "username")]
     pub authcid: String,
+    #[serde(alias = "password")]
     pub passwd: Secret,
 }
 

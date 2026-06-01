@@ -135,7 +135,15 @@ impl Command {
                     load_or_wizard(config_paths, account.name.as_deref(), no_account)?;
                 let sock_path = account_config.sock_file.take().unwrap_or(default_sock_path);
                 let url = account_config.url;
-                let tls = account_config.tls.into();
+                // `account_config.alpn = None` infers from URL scheme: ["imap"]
+                // for imap[s]://, ["smtp"] for smtp[s]://. An explicit empty vec
+                // disables ALPN; an explicit non-empty vec overrides the default.
+                let alpn = account_config.alpn.unwrap_or_else(|| match url.scheme() {
+                    "imap" | "imaps" => io_imap::client::default_alpn(),
+                    "smtp" | "smtps" => io_smtp::client::default_alpn(),
+                    _ => Vec::new(),
+                });
+                let tls = account_config.tls.into_tls(alpn);
                 let starttls = account_config.starttls;
                 let sasl = account_config
                     .sasl

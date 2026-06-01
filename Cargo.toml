@@ -21,9 +21,9 @@ default = ["imap", "smtp", "scram", "rustls-ring"]
 imap = ["dep:io-imap", "pimalaya-cli/imap"]
 smtp = ["dep:io-smtp", "pimalaya-cli/smtp"]
 scram = ["io-imap?/scram", "io-smtp?/scram"]
-native-tls  = ["pimalaya-stream/native-tls", "io-discovery/native-tls", "io-imap?/native-tls", "io-smtp?/native-tls"]
-rustls-aws  = ["pimalaya-stream/rustls-aws", "io-discovery/rustls-aws", "io-imap?/rustls-aws", "io-smtp?/rustls-aws"]
-rustls-ring = ["pimalaya-stream/rustls-ring", "io-discovery/rustls-ring", "io-imap?/rustls-ring", "io-smtp?/rustls-ring"]
+native-tls  = ["pimalaya-stream/native-tls", "pimconf/native-tls", "io-imap?/native-tls", "io-smtp?/native-tls"]
+rustls-aws  = ["pimalaya-stream/rustls-aws", "pimconf/rustls-aws", "io-imap?/rustls-aws", "io-smtp?/rustls-aws"]
+rustls-ring = ["pimalaya-stream/rustls-ring", "pimconf/rustls-ring", "io-imap?/rustls-ring", "io-smtp?/rustls-ring"]
 vendored = ["pimalaya-stream/vendored"]
 
 [profile.release]
@@ -39,13 +39,13 @@ pimalaya-cli = { version = "0.0.1", default-features = false, features = ["build
 anyhow = "1"
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 dirs = "6"
-io-discovery = { version = "0.1", default-features = false, features = ["pacc", "autoconfig", "rfc6186", "client"] }
 io-imap = { version = "0.0.1", default-features = false, features = ["client"], optional = true }
 io-smtp = { version = "0.0.1", default-features = false, features = ["client"], optional = true }
 log = "0.4"
 pimalaya-cli = { version = "0.0.1", default-features = false, features = ["prompt", "spinner", "terminal", "wizard"] }
 pimalaya-config = { version = "0.0.1", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.0.1", default-features = false, features = ["std"] }
+pimconf = { version = "0.1", default-features = false, features = ["pacc", "autoconfig", "rfc6186", "client"] }
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 url = { version = "2.2", features = ["serde"] }
@@ -54,21 +54,21 @@ url = { version = "2.2", features = ["serde"] }
 uds_windows = "1"
 
 # [patch.crates-io]
-# io-discovery.path = "../io-discovery"
 # io-http.path = "../io-http"
 # io-imap.path = "../io-imap"
 # io-smtp.path = "../io-smtp"
 # pimalaya-cli.path = "../cli"
 # pimalaya-config.path = "../config"
 # pimalaya-stream.path = "../stream"
+# pimconf.path = "../pimconf"
 
 [patch.crates-io]
 domain = { git = "https://github.com/soywod/domain", branch = "new-srv" }
 imap-codec.git = "https://github.com/soywod/imap-codec"
-io-discovery.git = "https://github.com/pimalaya/io-discovery"
 io-http.git = "https://github.com/pimalaya/io-http"
 io-imap.git = "https://github.com/pimalaya/io-imap"
 io-smtp.git = "https://github.com/pimalaya/io-smtp"
 pimalaya-cli.git = "https://github.com/pimalaya/cli"
 pimalaya-config.git = "https://github.com/pimalaya/config"
 pimalaya-stream.git = "https://github.com/pimalaya/stream"
+pimconf.git = "https://github.com/pimalaya/pimconf"

@@ -137,6 +137,7 @@ fn build_url_account(url: Url) -> Result<AccountConfig> {
                 sock_file: None,
                 url,
                 tls: TlsConfig::default(),
+                alpn: None,
                 starttls,
                 sasl: Some(sasl),
             })
@@ -301,6 +302,7 @@ fn build_imap_account(endpoint: WizardImapConfig, sasl: SaslConfig) -> AccountCo
         sock_file: None,
         url,
         tls: TlsConfig::default(),
+        alpn: None,
         starttls,
         sasl: Some(sasl),
     }
@@ -317,6 +319,7 @@ fn build_smtp_account(endpoint: WizardSmtpConfig, sasl: SaslConfig) -> AccountCo
         sock_file: None,
         url,
         tls: TlsConfig::default(),
+        alpn: None,
         starttls,
         sasl: Some(sasl),
     }

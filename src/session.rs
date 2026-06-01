@@ -163,7 +163,7 @@ pub fn start(
             feature = "native-tls"
         ))]
         "imap" | "imaps" => {
-            let (client, capability) = ImapClientStd::connect(&url, &tls, starttls, sasl)?;
+            let (client, capability) = ImapClientStd::connect(&url, &tls, starttls, sasl, None)?;
             Session::Imap { client, capability }
         }
         #[cfg(feature = "smtp")]

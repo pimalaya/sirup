@@ -50,6 +50,13 @@ url = "imaps://example.com"
 # i.e. `imap://` or `smtp://`).
 #starttls = false
 
+# ALPN protocol identifiers offered during the TLS handshake (rustls only;
+# native-tls ignores it). Omitting the field infers the default from the URL
+# scheme: ["imap"] for `imap[s]://`, ["smtp"] for `smtp[s]://`. An empty
+# array disables ALPN; any explicit value overrides the inferred default.
+#alpn = ["imap"]
+#alpn = []
+
 # --------------------------------------------------------------------------------
 # SASL config
 # --------------------------------------------------------------------------------
@@ -65,34 +72,28 @@ url = "imaps://example.com"
 # SASL PLAIN
 # https://datatracker.ietf.org/doc/html/rfc4616
 #sasl.plain.authzid = "authzid"
-sasl.plain.authcid = "test@example.com"
-sasl.plain.passwd.raw = "***"
-#sasl.plain.passwd.command = ["mimosa", "password", "read", "example"]
+sasl.plain.username = "user@example.com"
+sasl.plain.password.raw = "***"
+#sasl.plain.password.command = "pass show example"
 
 # SASL LOGIN
 # https://datatracker.ietf.org/doc/html/draft-murchison-sasl-login-00
-#sasl.login.username = "username"
+#sasl.login.username = "user@example.com"
 #sasl.login.password.raw = "***"
-#sasl.login.password.command = ["mimosa", "password", "read", "example"]
 
-# SASL OAUTHBEARER
+# SASL OAUTHBEARER (host/port for the GS2 header are derived from the
+# session URL at connect time).
 # https://datatracker.ietf.org/doc/html/rfc7628
-# The `host`/`port` pair is sent verbatim in the GS2 header and should match
-# the server you actually connect to.
 #sasl.oauthbearer.username = "user@example.com"
-#sasl.oauthbearer.host = "imap.example.com"
-#sasl.oauthbearer.port = 993
 #sasl.oauthbearer.token.raw = "***"
-#sasl.oauthbearer.token.command = ["mimosa", "token", "read", "example"]
+#sasl.oauthbearer.token.command = ["ortie", "token", "read", "example"]
 
-# SASL XOAUTH2 (Google's pre-standard OAuth 2.0 SASL mechanism)
+# SASL XOAUTH2 (Google's pre-standard OAuth 2.0 SASL).
 # https://developers.google.com/gmail/imap/xoauth2-protocol
 #sasl.xoauth2.username = "user@example.com"
 #sasl.xoauth2.token.raw = "***"
-#sasl.xoauth2.token.command = ["mimosa", "token", "read", "example"]
 
-# SASL SCRAM-SHA-256 (requires `scram` cargo feature)
+# SASL SCRAM-SHA-256 (requires `scram` cargo feature).
 # https://datatracker.ietf.org/doc/html/rfc7677
-#sasl.scram-sha-256.username = "username"
+#sasl.scram-sha-256.username = "user@example.com"
 #sasl.scram-sha-256.password.raw = "***"
-#sasl.scram-sha-256.password.command = ["mimosa", "password", "read", "example"]
