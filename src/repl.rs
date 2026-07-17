@@ -1,21 +1,3 @@
-// This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
-// sessions and expose them via Unix sockets.
-//
-// Copyright (C) 2026  soywod <pimalaya.org@posteo.net>
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
@@ -118,7 +100,6 @@ pub mod smtp {
         let stdin = stdin();
         let mut stdout = stdout();
 
-        // Read initial greeting
         loop {
             let mut line = String::new();
             let n = reader.read_line(&mut line)?;
@@ -127,8 +108,8 @@ pub mod smtp {
             }
             print!("S: {line}");
 
-            // SMTP: line with space after code (e.g., "220 ") is the final line
-            // Lines with dash (e.g., "220-") are continuation lines
+            // NOTE: a space after the 3-digit code ("220 ") marks the final
+            // reply line; a dash ("220-") marks a continuation line.
             if line.len() >= 4 && line.chars().nth(3) == Some(' ') {
                 break;
             }

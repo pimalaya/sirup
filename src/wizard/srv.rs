@@ -1,21 +1,3 @@
-// This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
-// sessions and expose them via Unix sockets.
-//
-// Copyright (C) 2026  soywod <pimalaya.org@posteo.net>
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 //! RFC 6186 SRV step of the wizard's discovery chain. Runs the three
 //! `_imap._tcp` / `_imaps._tcp` / `_submission._tcp` lookups under one
 //! spinner and assembles them into a [`DiscoveryResult`].
@@ -24,7 +6,11 @@
 //! SMTP: from `_submission`; the encryption is inferred from the
 //! record's port (465 → implicit TLS, otherwise StartTls).
 
-use log::debug;
+use io_pim_discovery::rfc6186::{
+    client::DiscoverySrvClientStd,
+    service::{DiscoverySrvReport, DiscoverySrvService},
+};
+use log::trace;
 use pimalaya_cli::{
     spinner::Spinner,
     wizard::{
@@ -32,14 +18,13 @@ use pimalaya_cli::{
         smtp::{Encryption as SmtpEncryption, SmtpAuth, SmtpSecret, WizardSmtpConfig},
     },
 };
-use pimconf::rfc6186::{
-    client::DiscoverySrvClientStd,
-    types::{SrvReport, SrvService},
-};
 
 use crate::wizard::discover::{DiscoveryResult, discovery_resolver};
 
-pub fn run(domain: &str) -> Option<SrvReport> {
+/// Runs the RFC 6186 SRV lookups under a spinner, returning the report
+/// when it holds at least one record and `None` on a graceful miss the
+/// discovery chain steps past.
+pub fn run(domain: &str) -> Option<DiscoverySrvReport> {
     let spinner = Spinner::start(format!("Probing SRV records for {domain}…"));
     let mut client = DiscoverySrvClientStd::new(discovery_resolver());
 
@@ -53,14 +38,16 @@ pub fn run(domain: &str) -> Option<SrvReport> {
             None
         }
         Err(err) => {
-            debug!("SRV discovery for {domain} failed: {err}");
+            trace!("SRV discovery for {domain} failed: {err}");
             spinner.failure(format!("SRV: no records for {domain}"));
             None
         }
     }
 }
 
-pub fn defaults(report: &SrvReport) -> DiscoveryResult {
+/// Converts an SRV report into the IMAP/SMTP-only [`DiscoveryResult`],
+/// preferring `_imaps` (implicit TLS) over `_imap` (STARTTLS).
+pub fn defaults(report: &DiscoverySrvReport) -> DiscoveryResult {
     let imap = report
         .imaps
         .as_ref()
@@ -77,7 +64,7 @@ pub fn defaults(report: &SrvReport) -> DiscoveryResult {
     DiscoveryResult { imap, smtp }
 }
 
-fn summary(domain: &str, report: &SrvReport) -> String {
+fn summary(domain: &str, report: &DiscoverySrvReport) -> String {
     let mut protos = Vec::with_capacity(2);
 
     if report.imap.is_some() || report.imaps.is_some() {
@@ -91,11 +78,14 @@ fn summary(domain: &str, report: &SrvReport) -> String {
     format!("SRV: discovered {} for {domain}", protos.join(" + "))
 }
 
-fn is_empty(report: &SrvReport) -> bool {
+fn is_empty(report: &DiscoverySrvReport) -> bool {
     report.imap.is_none() && report.imaps.is_none() && report.submission.is_none()
 }
 
-fn imap_from_service(service: &SrvService, encryption: ImapEncryption) -> WizardImapConfig {
+fn imap_from_service(
+    service: &DiscoverySrvService,
+    encryption: ImapEncryption,
+) -> WizardImapConfig {
     WizardImapConfig {
         host: service.host.clone(),
         port: service.port,
@@ -105,7 +95,7 @@ fn imap_from_service(service: &SrvService, encryption: ImapEncryption) -> Wizard
     }
 }
 
-fn smtp_from_service(service: &SrvService) -> WizardSmtpConfig {
+fn smtp_from_service(service: &DiscoverySrvService) -> WizardSmtpConfig {
     let encryption = if service.port == 465 {
         SmtpEncryption::Tls
     } else {

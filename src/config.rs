@@ -1,25 +1,7 @@
-// This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
-// sessions and expose them via Unix sockets.
-//
-// Copyright (C) 2026  soywod <pimalaya.org@posteo.net>
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 use std::{collections::HashMap, env::temp_dir, fs, path::PathBuf};
 
-use anyhow::Result;
-use log::{error, warn};
+use anyhow::{Result, bail};
+use log::warn;
 use pimalaya_config::{secret::Secret, toml::TomlConfig};
 use pimalaya_stream::{
     sasl::{
@@ -85,7 +67,17 @@ pub struct AccountConfig {
     #[serde(default)]
     pub default: bool,
     pub sock_file: Option<PathBuf>,
-    pub url: Url,
+
+    /// Backend server address as a full `imap://`, `imaps://`,
+    /// `smtp://` or `smtps://` URL. The scheme picks the protocol
+    /// (IMAP vs SMTP) and its `s` suffix selects implicit TLS.
+    ///
+    /// Mirrors himalaya's `imap.server` / `smtp.server`, but the
+    /// scheme is mandatory here: a single sirup account serves either
+    /// protocol, so there is no per-protocol default scheme to fall
+    /// back to for a bare authority.
+    pub server: String,
+
     #[serde(default)]
     pub tls: TlsConfig,
     #[serde(default)]
@@ -98,6 +90,29 @@ pub struct AccountConfig {
     /// provider; `native-tls` ignores ALPN.
     pub alpn: Option<Vec<String>>,
     pub sasl: Option<SaslConfig>,
+}
+
+/// Parses an account `server` string into a [`Url`], validating the
+/// scheme.
+///
+/// The scheme is mandatory and selects the protocol: `imap`/`imaps`
+/// for IMAP, `smtp`/`smtps` for SMTP, the `s` suffix picking implicit
+/// TLS. Unlike himalaya's per-protocol `parse_server`, a bare
+/// authority is rejected: a single sirup account serves either
+/// protocol, so there is no single scheme to default to.
+pub fn parse_server(server: &str) -> Result<Url> {
+    let url = Url::parse(server)?;
+    let scheme = url.scheme();
+
+    if !matches!(scheme, "imap" | "imaps" | "smtp" | "smtps") {
+        bail!("Invalid server scheme `{scheme}`, expects `imap(s)` or `smtp(s)`");
+    }
+
+    if url.host_str().is_none() {
+        bail!("Server `{server}` is missing a host");
+    }
+
+    Ok(url)
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -260,7 +275,7 @@ fn default_socks_dir() -> PathBuf {
     warn!("runtime dir not found, falling back to {p}");
 
     if let Err(err) = fs::create_dir_all(&path) {
-        error!("cannot create dir {p} ({err}), assuming it already exists");
+        warn!("cannot create dir {p} ({err}), assuming it already exists");
     }
 
     path

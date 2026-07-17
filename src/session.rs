@@ -1,21 +1,3 @@
-// This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
-// sessions and expose them via Unix sockets.
-//
-// Copyright (C) 2026  soywod <pimalaya.org@posteo.net>
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 #[cfg(feature = "smtp")]
 use std::net::Ipv4Addr;
 #[cfg(unix)]
@@ -42,7 +24,7 @@ use io_imap::{
     },
 };
 #[cfg(feature = "smtp")]
-use io_smtp::{client::SmtpClientStd, rfc5321::types::ehlo_domain::EhloDomain};
+use io_smtp::{client::SmtpClientStd, rfc5321::SmtpEhloDomain};
 use log::{info, warn};
 use pimalaya_cli::spinner::Spinner;
 #[cfg(any(feature = "imap", feature = "smtp"))]
@@ -173,7 +155,7 @@ pub fn start(
             feature = "native-tls"
         ))]
         "smtp" | "smtps" => {
-            let domain: EhloDomain<'static> = Ipv4Addr::new(127, 0, 0, 1).into();
+            let domain: SmtpEhloDomain<'static> = Ipv4Addr::new(127, 0, 0, 1).into();
             Session::Smtp(SmtpClientStd::connect(&url, &tls, starttls, domain, sasl)?)
         }
 
@@ -194,7 +176,6 @@ pub fn start(
 
     let s = Spinner::start("Binding local socket");
 
-    // Remove stale socket file from a previous run
     if sock_path.exists() {
         fs::remove_file(&sock_path)?;
     }
@@ -207,9 +188,9 @@ pub fn start(
     listener.set_nonblocking(true)?;
     s.success("Binding local socket");
 
-    // NOOP cadence: under both the IMAP 30 min server-side minimum
-    // (RFC 3501 §5.4) and the SMTP 5 min receiver timeout (RFC 5321
-    // §4.5.3.2.7), with margin for slow round-trips.
+    // NOTE: NOOP cadence sits under both the IMAP 30 min server-side
+    // minimum (RFC 3501 §5.4) and the SMTP 5 min receiver timeout (RFC
+    // 5321 §4.5.3.2.7), with margin for slow round-trips.
     const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(4 * 60);
     const ACCEPT_POLL: Duration = Duration::from_millis(200);
     let mut last_keepalive = Instant::now();
@@ -236,7 +217,6 @@ pub fn start(
         s.success("Connection established");
         s = Spinner::start("Holding connection");
 
-        // Send protocol-specific greeting
         match &conn {
             #[cfg(feature = "imap")]
             Session::Imap { capability, .. } => {
@@ -255,7 +235,6 @@ pub fn start(
             }
             #[cfg(feature = "smtp")]
             Session::Smtp(_) => {
-                // SMTP greeting: 220 ready
                 client.write_all(b"220 Sirup SMTP pre-auth session ready\r\n")?;
             }
             #[cfg(not(feature = "imap"))]
@@ -265,7 +244,6 @@ pub fn start(
 
         client.flush()?;
 
-        // Proxy bidirectionally between client and server
         match proxy(&mut conn, &mut client) {
             Ok(()) => {
                 s.failure("Disconnected");
@@ -275,7 +253,8 @@ pub fn start(
             Err(err) => warn!("proxy error: {err}"),
         }
 
-        // Real client traffic counts as keepalive
+        // NOTE: real client traffic counts as keepalive, resetting the
+        // idle NOOP timer.
         last_keepalive = Instant::now();
     }
 }

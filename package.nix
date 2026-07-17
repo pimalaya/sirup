@@ -81,7 +81,10 @@ rustPlatform.buildRustPackage {
     mainProgram = "sirup";
     homepage = "https://github.com/pimalaya/sirup";
     changelog = "https://github.com/pimalaya/sirup/blob/v${version}/CHANGELOG.md";
-    license = lib.licenses.agpl3Only;
+    license = [
+      lib.licenses.mit
+      lib.licenses.asl20
+    ];
     maintainers = with lib.maintainers; [ soywod ];
   };
 }

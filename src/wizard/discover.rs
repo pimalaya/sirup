@@ -1,21 +1,3 @@
-// This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
-// sessions and expose them via Unix sockets.
-//
-// Copyright (C) 2026  soywod <pimalaya.org@posteo.net>
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 //! In-memory wizard flow.
 //!
 //! 1. Ask once for an email address, an `imap[s]://` / `smtp[s]://`
@@ -29,7 +11,10 @@
 //! 4. Prompt the SASL mechanism plus only the fields it needs.
 //! 5. Return the built [`AccountConfig`]; nothing is persisted.
 
+use std::env;
+
 use anyhow::{Result, bail};
+use io_pim_discovery::shared::dns::system_resolver;
 use pimalaya_cli::{
     prompt,
     wizard::{
@@ -50,14 +35,33 @@ use crate::{
     wizard::{autoconfig, pacc, srv},
 };
 
+/// DNS-over-TCP resolver backing discovery when `SIRUP_DNS_RESOLVER`
+/// is unset and no system resolver is found: Cloudflare's `1.1.1.1`.
 const DEFAULT_RESOLVER: &str = "tcp://1.1.1.1:53";
 
+/// Resolver used by discovery: the `SIRUP_DNS_RESOLVER` override
+/// first, then the system resolver (`/etc/resolv.conf` on unix, the
+/// network adapters on windows), then the Cloudflare default. This
+/// avoids leaking the queried domain to a third-party resolver and
+/// works around networks that block the default.
 pub fn discovery_resolver() -> Url {
+    if let Ok(resolver) = env::var("SIRUP_DNS_RESOLVER") {
+        if let Ok(url) = resolver.parse() {
+            return url;
+        }
+    }
+
+    if let Some(url) = system_resolver() {
+        return url;
+    }
+
     DEFAULT_RESOLVER
         .parse()
         .expect("DEFAULT_RESOLVER must be a valid URL")
 }
 
+/// TLS profile for the HTTPS-bound discovery probes; they only speak
+/// HTTP/1.1 to the `.well-known` endpoints.
 pub fn discovery_tls() -> Tls {
     let mut tls = Tls::default();
     tls.rustls.alpn = vec!["http/1.1".into()];
@@ -73,16 +77,22 @@ pub struct DiscoveryResult {
 }
 
 impl DiscoveryResult {
+    /// Whether neither an IMAP nor an SMTP endpoint was found, marking
+    /// the source as a miss so the discovery chain moves on.
     pub fn is_empty(&self) -> bool {
         self.imap.is_none() && self.smtp.is_none()
     }
 }
 
+/// Prompts once for an email address, a server URL or a bare domain,
+/// then builds the in-memory account from it.
 pub fn run() -> Result<AccountConfig> {
     let input = prompt::text::<&str>("Email address, server URL or domain:", None)?;
     run_with_input(input.trim())
 }
 
+/// Builds an account from an already-collected input, routing by its
+/// shape: a URL is used as-is, an email or bare domain runs discovery.
 pub fn run_with_input(input: &str) -> Result<AccountConfig> {
     match classify(input)? {
         Input::Url(url) => build_url_account(url),
@@ -119,8 +129,9 @@ fn classify(input: &str) -> Result<Input> {
     }
 }
 
-// ── URL input ───────────────────────────────────────────────────────────────
-
+/// Builds an account straight from an `imap[s]://` / `smtp[s]://` URL:
+/// validates the scheme and host, derives STARTTLS from the plain
+/// scheme, then prompts only for the SASL credentials.
 fn build_url_account(url: Url) -> Result<AccountConfig> {
     let scheme = url.scheme().to_ascii_lowercase();
     if url.host_str().is_none() {
@@ -135,7 +146,7 @@ fn build_url_account(url: Url) -> Result<AccountConfig> {
             Ok(AccountConfig {
                 default: true,
                 sock_file: None,
-                url,
+                server: url.to_string(),
                 tls: TlsConfig::default(),
                 alpn: None,
                 starttls,
@@ -146,8 +157,10 @@ fn build_url_account(url: Url) -> Result<AccountConfig> {
     }
 }
 
-// ── Domain / email input (first-hit-wins discovery, no picker) ──────────────
-
+/// Builds an account from a discovered endpoint: runs the first-hit
+/// discovery chain over the domain, picks the protocol (prompting only
+/// when both IMAP and SMTP come back), then prompts for the SASL
+/// credentials. Bails when nothing is discovered.
 fn build_discovery_account(local_part: Option<&str>, domain: &str) -> Result<AccountConfig> {
     let result = discover(local_part, domain);
     if result.is_empty() {
@@ -241,8 +254,7 @@ fn discover(local_part: Option<&str>, domain: &str) -> DiscoveryResult {
     DiscoveryResult::default()
 }
 
-// ── SASL prompts ────────────────────────────────────────────────────────────
-
+/// SASL mechanisms offered by the credential prompt, in menu order.
 const SASL_MECHANISMS: [&str; 6] = [
     "PLAIN",
     "LOGIN",
@@ -289,18 +301,17 @@ fn prompt_raw_secret(label: &str) -> Result<Secret> {
     Ok(Secret::Raw(SecretString::from(raw)))
 }
 
-// ── Account assembly ────────────────────────────────────────────────────────
-
+/// Assembles an IMAP account from a discovered endpoint, deriving the
+/// scheme and STARTTLS switch from its encryption.
 fn build_imap_account(endpoint: WizardImapConfig, sasl: SaslConfig) -> AccountConfig {
     let starttls = matches!(endpoint.encryption, ImapEncryption::StartTls);
     let scheme = if starttls { "imap" } else { "imaps" };
-    let url = Url::parse(&format!("{scheme}://{}:{}", endpoint.host, endpoint.port))
-        .expect("imap URL must parse");
+    let server = format!("{scheme}://{}:{}", endpoint.host, endpoint.port);
 
     AccountConfig {
         default: true,
         sock_file: None,
-        url,
+        server,
         tls: TlsConfig::default(),
         alpn: None,
         starttls,
@@ -308,16 +319,17 @@ fn build_imap_account(endpoint: WizardImapConfig, sasl: SaslConfig) -> AccountCo
     }
 }
 
+/// Assembles an SMTP account from a discovered endpoint, deriving the
+/// scheme and STARTTLS switch from its encryption.
 fn build_smtp_account(endpoint: WizardSmtpConfig, sasl: SaslConfig) -> AccountConfig {
     let starttls = matches!(endpoint.encryption, SmtpEncryption::StartTls);
     let scheme = if starttls { "smtp" } else { "smtps" };
-    let url = Url::parse(&format!("{scheme}://{}:{}", endpoint.host, endpoint.port))
-        .expect("smtp URL must parse");
+    let server = format!("{scheme}://{}:{}", endpoint.host, endpoint.port);
 
     AccountConfig {
         default: true,
         sock_file: None,
-        url,
+        server,
         tls: TlsConfig::default(),
         alpn: None,
         starttls,

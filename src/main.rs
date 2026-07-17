@@ -1,20 +1,36 @@
-// This file is part of Sirup, a CLI to spawn pre-authenticated IMAP/SMTP
-// sessions and expose them via Unix sockets.
-//
-// Copyright (C) 2026  soywod <pimalaya.org@posteo.net>
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//! # Sirup
+//!
+//! Sirup spawns a pre-authenticated IMAP or SMTP session and exposes it
+//! on a Unix socket, so any local client can speak the raw protocol
+//! without holding credentials or repeating the login and TLS
+//! handshake. It runs as a small blocking daemon, one instance per
+//! account, best placed behind a systemd service or equivalent.
+//!
+//! ## Layout
+//!
+//! [`config`] models the on-disk TOML: one account per entry, each
+//! carrying a server address, a TLS profile, an optional STARTTLS switch
+//! and a single SASL mechanism. [`session`] is the daemon itself: it
+//! opens and authenticates the upstream connection, binds the socket,
+//! replaces the protocol greeting with a PREAUTH one and proxies bytes
+//! both ways, issuing a periodic NOOP to keep the upstream alive while
+//! idle. [`repl`] is a minimal reference client that connects to the
+//! socket and forwards raw commands, used for testing and as an
+//! implementation example.
+//!
+//! ## Wizard
+//!
+//! When no configuration file is found, the wizard module builds an
+//! account in memory from a single email, URL or domain input: it
+//! probes PACC, Thunderbird Autoconfig and RFC 6186 SRV through
+//! io-pim-discovery, then prompts for the SASL credentials. Nothing is
+//! written to disk.
+//!
+//! ## Features
+//!
+//! Protocol support (imap, smtp) and the TLS provider (rustls-ring,
+//! rustls-aws, native-tls) are cargo features; the wizard needs both
+//! protocols and a TLS provider to be enabled.
 
 mod config;
 mod repl;
@@ -44,7 +60,7 @@ use pimalaya_cli::{
 };
 use pimalaya_config::toml::TomlConfig;
 
-use crate::config::{AccountConfig, Config};
+use crate::config::{AccountConfig, Config, parse_server};
 
 fn main() {
     let cli = Cli::parse();
@@ -100,7 +116,7 @@ pub enum Command {
     /// Start a pre-authenticated IMAP/SMTP session for the given account,
     /// proxied to a Unix socket.
     ///
-    /// The protocol is selected from the account's URL scheme (`imap`/`imaps`
+    /// The protocol is selected from the account's server scheme (`imap`/`imaps`
     /// or `smtp`/`smtps`). This command runs as a blocking daemon; best place
     /// is inside a systemd service or equivalent.
     Start {
@@ -111,7 +127,7 @@ pub enum Command {
     /// account.
     ///
     /// The REPL connects to the Unix socket spawned by `start` and forwards raw
-    /// IMAP or SMTP commands (picked from the account's URL scheme). Mostly
+    /// IMAP or SMTP commands (picked from the account's server scheme). Mostly
     /// intended for testing: it confirms the account is properly configured and
     /// that the socket-backed session is reachable.
     Repl {
@@ -134,35 +150,40 @@ impl Command {
                 let (default_sock_path, mut account_config) =
                     load_or_wizard(config_paths, account.name.as_deref(), no_account)?;
                 let sock_path = account_config.sock_file.take().unwrap_or(default_sock_path);
-                let url = account_config.url;
-                // `account_config.alpn = None` infers from URL scheme: ["imap"]
-                // for imap[s]://, ["smtp"] for smtp[s]://. An explicit empty vec
-                // disables ALPN; an explicit non-empty vec overrides the default.
-                let alpn = account_config.alpn.unwrap_or_else(|| match url.scheme() {
-                    "imap" | "imaps" => io_imap::client::default_alpn(),
-                    "smtp" | "smtps" => io_smtp::client::default_alpn(),
-                    _ => Vec::new(),
-                });
+                let server = parse_server(&account_config.server)?;
+                // NOTE: a missing alpn infers from the server scheme (["imap"]
+                // for imap[s]://, ["smtp"] for smtp[s]://); an explicit empty
+                // vec disables ALPN, a non-empty one overrides the default.
+                let alpn = account_config
+                    .alpn
+                    .unwrap_or_else(|| match server.scheme() {
+                        #[cfg(feature = "imap")]
+                        "imap" | "imaps" => io_imap::client::default_alpn(),
+                        #[cfg(feature = "smtp")]
+                        "smtp" | "smtps" => io_smtp::client::SmtpClientStd::default_alpn(),
+                        _ => Vec::new(),
+                    });
                 let tls = account_config.tls.into_tls(alpn);
                 let starttls = account_config.starttls;
                 let sasl = account_config
                     .sasl
                     .and_then(|cfg| {
-                        let host = url.host_str()?;
-                        let port = url.port_or_known_default()?;
+                        let host = server.host_str()?;
+                        let port = server.port_or_known_default()?;
                         Some(cfg.try_into_sasl(host, port))
                     })
                     .transpose()?;
 
-                session::start(sock_path, url, tls, starttls, sasl)
+                session::start(sock_path, server, tls, starttls, sasl)
             }
 
             Command::Repl { account } => {
                 let (default_sock_path, account_config) =
                     load_or_wizard(config_paths, account.name.as_deref(), no_account)?;
                 let sock_path = account_config.sock_file.unwrap_or(default_sock_path);
+                let server = parse_server(&account_config.server)?;
 
-                repl::start(sock_path, account_config.url)
+                repl::start(sock_path, server)
             }
 
             Command::Manuals(cmd) => cmd.execute(printer, Cli::command()),
@@ -197,21 +218,28 @@ fn load_or_wizard(
     Ok((sock_path, account_config))
 }
 
-#[cfg(all(feature = "imap", feature = "smtp"))]
-#[cfg(any(
-    feature = "rustls-ring",
-    feature = "rustls-aws",
-    feature = "native-tls"
+#[cfg(all(
+    feature = "imap",
+    feature = "smtp",
+    any(
+        feature = "rustls-ring",
+        feature = "rustls-aws",
+        feature = "native-tls"
+    )
 ))]
 fn wizard_run() -> Result<AccountConfig> {
     wizard::discover::run()
 }
 
-#[cfg(not(feature = "imap"))]
-#[cfg(not(feature = "smtp"))]
-#[cfg(not(feature = "rustls-ring"))]
-#[cfg(not(feature = "rustls-aws"))]
-#[cfg(not(feature = "native-tls"))]
+#[cfg(not(all(
+    feature = "imap",
+    feature = "smtp",
+    any(
+        feature = "rustls-ring",
+        feature = "rustls-aws",
+        feature = "native-tls"
+    )
+)))]
 fn wizard_run() -> Result<AccountConfig> {
     bail!(
         "No config file found, and the wizard requires the `imap`, `smtp` \

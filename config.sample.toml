@@ -11,31 +11,26 @@
 # deep-merged on top of it.
 # ================================================================================
 
-# --------------------------------------------------------------------------------
-# Global config
-# --------------------------------------------------------------------------------
-
 # Directory containing all per-account Unix sockets. Defaults to
 # `$XDG_RUNTIME_DIR` (typically `/run/user/<uid>`); falls back to
 # `$TMPDIR/service-sirup` when `$XDG_RUNTIME_DIR` is unset.
 #socks-dir = "/run/user/1000"
 
-# --------------------------------------------------------------------------------
-# Account config
-# --------------------------------------------------------------------------------
-
-# Declare one section per account. Pick one with `sirup start <NAME>` /
-# `sirup repl <NAME>`. Unlike himalaya, sirup has no `default = true`: the
-# account name is always required on the command line.
 [accounts.example]
+
+# Use this account when `sirup start` / `sirup repl` is run without a name.
+# Exactly one account should set it.
+#default = true
 
 # Socket file for this account, defaults to
 # `<socks-dir>/sirup/<account>.sock`.
 #sock-file = "/run/user/1000/sirup/example.sock"
 
-# URL connection in the form `(imap|smtp)[s]://host[:port]`. The scheme picks
-# the protocol; the `s` suffix selects implicit TLS.
-url = "imaps://example.com"
+# Backend server address in the form `(imap|smtp)[s]://host[:port]`. The scheme
+# picks the protocol; the `s` suffix selects implicit TLS. Unlike himalaya, the
+# scheme is mandatory: one account serves either protocol, so a bare authority
+# has no default scheme to fall back to.
+server = "imaps://example.com"
 
 # TLS provider, defaults to the first available at runtime.
 #tls.provider = "rustls" | "native-tls"
@@ -46,7 +41,7 @@ url = "imaps://example.com"
 # Custom TLS certificate (extra root, PEM-encoded)
 #tls.cert = "/path/to/custom/cert.pem"
 
-# Enable STARTTLS (only valid when the URL scheme is the non-`s` form,
+# Enable STARTTLS (only valid when the server scheme is the non-`s` form,
 # i.e. `imap://` or `smtp://`).
 #starttls = false
 
