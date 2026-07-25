@@ -5,7 +5,12 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::{
     fs,
     io::{self, Read, Write},
+    net::Shutdown,
     path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -73,6 +78,30 @@ impl Session {
             Self::Invalid => return Ok(()),
         };
         stream.set_read_timeout(timeout)
+    }
+
+    /// Toggles non-blocking mode on the underlying authenticated stream,
+    /// reaching it through the same [`StreamStd`] downcast as
+    /// [`Self::set_read_timeout`].
+    pub fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
+        let stream: &mut StreamStd = match self {
+            #[cfg(feature = "imap")]
+            Self::Imap { client, .. } => client
+                .stream
+                .as_any_mut()
+                .downcast_mut::<StreamStd>()
+                .expect("Sirup IMAP stream is always StreamStd"),
+            #[cfg(feature = "smtp")]
+            Self::Smtp(client) => client
+                .stream
+                .as_any_mut()
+                .downcast_mut::<StreamStd>()
+                .expect("Sirup SMTP stream is always StreamStd"),
+            #[cfg(not(feature = "imap"))]
+            #[cfg(not(feature = "smtp"))]
+            Self::Invalid => return Ok(()),
+        };
+        stream.set_nonblocking(nonblocking)
     }
 
     /// Sends a protocol-level NOOP to keep the upstream session alive.
@@ -259,33 +288,141 @@ pub fn start(
     }
 }
 
+/// Relays bytes both ways between the client socket and the upstream
+/// session until either side closes.
+///
+/// The upstream is a single stream whose TLS state cannot be touched by
+/// two threads at once, so exactly one thread owns it: the pump, which
+/// multiplexes non-blocking upstream reads with writes drained from a
+/// channel. A second thread only reads the client socket and feeds that
+/// channel. No shared lock means neither direction can starve or park the
+/// other. The upstream is non-blocking so an idle read never blocks the
+/// pump (a TLS read timeout is not reliably surfaced). Scoped threads keep
+/// the borrow of the long-lived `server` session local to this call.
 fn proxy(server: &mut Session, client: &mut UnixStream) -> Result<()> {
-    let timeout = Some(Duration::from_millis(50));
-    server.set_read_timeout(timeout)?;
-    client.set_read_timeout(timeout)?;
+    server.set_nonblocking(true)?;
+    // The client is accepted from a non-blocking listener; pin it to
+    // blocking so its read parks instead of spinning.
+    client.set_nonblocking(false)?;
 
+    let running = AtomicBool::new(true);
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    let client_reader = client.try_clone()?;
+    let client_writer = client.try_clone()?;
+
+    thread::scope(|scope| {
+        let reader = scope.spawn(|| client_to_channel(client_reader, tx, &running));
+        let pump = upstream_pump(server, rx, client_writer, &running);
+        let reader = reader.join().unwrap_or(Ok(()));
+        pump.and(reader)
+    })
+}
+
+/// Reads the client socket (blocking) and forwards each chunk to the pump
+/// over `tx`. On close it flips `running`; the pump wakes it back up by
+/// shutting the socket down when the upstream closes.
+fn client_to_channel(
+    mut client: UnixStream,
+    tx: mpsc::Sender<Vec<u8>>,
+    running: &AtomicBool,
+) -> Result<()> {
     let mut buf = [0; 1024 * 8];
 
-    loop {
-        // Client -> Server
+    while running.load(Ordering::Relaxed) {
         match client.read(&mut buf) {
-            Ok(0) => return Ok(()),
-            Ok(n) => {
-                server.write_all(&buf[..n])?;
-                server.flush()?;
-            }
+            Ok(0) => break,
+            Ok(n) if tx.send(buf[..n].to_vec()).is_ok() => {}
+            Ok(_) => break,
             Err(ref e) if is_timeout(e) => {}
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                running.store(false, Ordering::Relaxed);
+                return Err(e.into());
+            }
+        }
+    }
+
+    running.store(false, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Owns the upstream. Each pass drains any pending upstream bytes to the
+/// client, then writes any channel-buffered client bytes to the upstream,
+/// sleeping briefly only when both are idle.
+fn upstream_pump(
+    server: &mut Session,
+    rx: mpsc::Receiver<Vec<u8>>,
+    mut client: UnixStream,
+    running: &AtomicBool,
+) -> Result<()> {
+    let mut buf = [0; 1024 * 8];
+    let mut outcome = Ok(());
+
+    'pump: while running.load(Ordering::Relaxed) {
+        let mut idle = true;
+
+        // Upstream -> client (non-blocking; drain what is ready).
+        loop {
+            match server.read(&mut buf) {
+                Ok(0) => break 'pump,
+                Ok(n) => match client.write_all(&buf[..n]).and_then(|()| client.flush()) {
+                    Ok(()) => idle = false,
+                    Err(e) => {
+                        outcome = Err(e.into());
+                        break 'pump;
+                    }
+                },
+                Err(ref e) if is_timeout(e) => break,
+                Err(e) => {
+                    outcome = Err(e.into());
+                    break 'pump;
+                }
+            }
         }
 
-        // Server -> Client
-        match server.read(&mut buf) {
-            Ok(0) => return Ok(()),
-            Ok(n) => {
-                client.write_all(&buf[..n])?;
-                client.flush()?;
+        // Client -> upstream (drain the channel).
+        loop {
+            match rx.try_recv() {
+                Ok(chunk) => {
+                    if let Err(e) = write_upstream(server, &chunk) {
+                        outcome = Err(e);
+                        break 'pump;
+                    }
+                    idle = false;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break 'pump,
             }
-            Err(ref e) if is_timeout(e) => {}
+        }
+
+        if idle {
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    // Restore blocking for the idle keepalive NOOP, then wake the client
+    // reader parked on its blocking read.
+    let _ = server.set_nonblocking(false);
+    running.store(false, Ordering::Relaxed);
+    let _ = client.shutdown(Shutdown::Both);
+    outcome
+}
+
+/// Writes `data` to the non-blocking upstream, retrying the `WouldBlock`
+/// that a full socket send buffer can raise mid-write.
+fn write_upstream(server: &mut Session, mut data: &[u8]) -> Result<()> {
+    while !data.is_empty() {
+        match server.write(data) {
+            Ok(0) => bail!("upstream write returned 0"),
+            Ok(n) => data = &data[n..],
+            Err(ref e) if is_timeout(e) => thread::sleep(Duration::from_millis(1)),
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    loop {
+        match server.flush() {
+            Ok(()) => return Ok(()),
+            Err(ref e) if is_timeout(e) => thread::sleep(Duration::from_millis(1)),
             Err(e) => return Err(e.into()),
         }
     }

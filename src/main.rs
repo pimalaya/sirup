@@ -165,12 +165,28 @@ impl Command {
                     });
                 let tls = account_config.tls.into_tls(alpn);
                 let starttls = account_config.starttls;
+                // NOTE: the url crate only knows default ports for web
+                // schemes, so imap(s)/smtp(s) need an explicit fallback.
+                // Gating the SASL config on port_or_known_default() would
+                // silently drop it for a portless URL like
+                // `imaps://mail.example.com`, opening an unauthenticated
+                // session. Host and port only feed OAUTHBEARER; the other
+                // mechanisms ignore them.
                 let sasl = account_config
                     .sasl
-                    .and_then(|cfg| {
-                        let host = server.host_str()?;
-                        let port = server.port_or_known_default()?;
-                        Some(cfg.try_into_sasl(host, port))
+                    .map(|cfg| {
+                        let host = server.host_str().unwrap_or_default();
+                        let scheme = server.scheme();
+                        let port = server.port().unwrap_or_else(|| match scheme {
+                            #[cfg(feature = "imap")]
+                            "imap" | "imaps" => io_imap::client::default_port(scheme),
+                            #[cfg(feature = "smtp")]
+                            "smtp" | "smtps" => {
+                                io_smtp::client::SmtpClientStd::default_port(scheme)
+                            }
+                            _ => 0,
+                        });
+                        cfg.try_into_sasl(host, port)
                     })
                     .transpose()?;
 
