@@ -22,7 +22,7 @@ CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix socke
 ## Features
 
 - **Pre-authenticated sessions**: connect and log in once, then expose the live IMAP or SMTP session on a Unix socket so any local client can speak the raw protocol without holding your credentials.
-- **Account discovery wizard**: run with no configuration and it finds a provider's servers from an email address, a server URL or a bare domain, then keeps the account in memory for that session only.
+- **Account discovery wizard**: run with no subcommand and it finds a provider's servers from an email address, a server URL or a bare domain, then prints a ready-to-save account config fragment on stdout.
 - **SASL authentication**: anonymous, login, plain, oauthbearer, xoauth2 and scram-sha-256 (the last requires the `scram` feature).
 - **STARTTLS and implicit TLS**: pick either from the account's server scheme, with the ALPN token inferred per protocol.
 - **REPL**: a built-in reference client that forwards raw commands to the socket, for testing and as an implementation example.
@@ -102,7 +102,13 @@ nix run
 
 ## Configuration
 
-Run sirup with no configuration file on disk to launch the wizard: it asks for an email address, a server URL or a bare domain, runs provider discovery, prompts for the SASL credentials, then keeps the resulting account in memory for that run only. Sirup never writes your configuration itself.
+Run sirup with no subcommand to launch the wizard: it asks for an email address, a server URL or a bare domain, runs provider discovery, prompts for the SASL credentials, then prints the resulting account as a ready-to-save `[accounts.<name>]` TOML fragment on stdout. Prompts render on stderr, so you can append it straight to your config:
+
+```sh
+sirup >> ~/.config/sirup/config.toml
+```
+
+Sirup never writes your configuration itself; the config stays entirely user-owned.
 
 A configuration is loaded from the first valid path among:
 
@@ -111,8 +117,6 @@ A configuration is loaded from the first valid path among:
 - $HOME/.siruprc
 
 Override the path with -c <PATH> or SIRUP_CONFIG=<PATH>; multiple paths can be passed at once, separated by :. The first one is the base and the rest are deep-merged on top. The full field reference lives in [config.sample.toml](./config.sample.toml).
-
-Pass --no-account to skip the file lookup and run the wizard even when a configuration exists: useful for a throwaway, in-memory account without exposing your stored credentials.
 
 ## Usage
 

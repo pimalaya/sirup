@@ -24,6 +24,22 @@ Sirup SHALL run as a long-lived daemon, one instance per account, so the cost of
 - WHEN two clients attach and detach in sequence
 - THEN both reuse the same upstream authenticated session with no reconnect between them
 
+### Requirement: Global account flag
+`-a` / `--account` SHALL be a global flag on the root parser, selecting the account for whichever subcommand runs.
+
+#### Scenario: Named account
+- GIVEN a config with several accounts
+- WHEN `sirup -a work start` runs
+- THEN the `work` account is used
+
+### Requirement: Commands resolve the account from config
+`start` and `repl` SHALL resolve their account from the loaded config by the global account name, or the `default = true` account when none is given. A missing config file or an unknown account SHALL be a hard error, with no wizard fallback.
+
+#### Scenario: Missing config
+- GIVEN no config file on disk
+- WHEN `sirup start` runs
+- THEN it fails with an error rather than falling back to the wizard
+
 ### Requirement: Single concrete stream downcast
 The protocol clients box their stream as a trait object to stay transport-agnostic. Sirup always opens its streams through `pimalaya-stream`, so the concrete type is always `StreamStd`. To set read timeouts on the proxy loop, Sirup SHALL downcast the boxed stream back to `StreamStd`. The downcast is infallible by construction and SHALL be documented as such at the call site.
 

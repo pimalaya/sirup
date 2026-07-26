@@ -158,15 +158,11 @@ impl Write for Session {
     }
 }
 
-pub fn start(
-    sock_path: PathBuf,
-    url: Url,
-    tls: Tls,
-    starttls: bool,
-    sasl: Option<Sasl>,
-) -> Result<()> {
-    let s = Spinner::start("Starting remote session");
-    let mut conn = match url.scheme() {
+/// Opens and authenticates the upstream session, selecting the protocol
+/// from the URL scheme (`imap`/`imaps` or `smtp`/`smtps`). Shared by
+/// [`start`] and [`test`].
+fn connect(url: Url, tls: Tls, starttls: bool, sasl: Option<Sasl>) -> Result<Session> {
+    Ok(match url.scheme() {
         #[cfg(feature = "imap")]
         #[cfg(any(
             feature = "rustls-ring",
@@ -200,7 +196,32 @@ pub fn start(
         }
 
         s => bail!("Unknown scheme `{s}`, expects `imap(s)` or `smtp(s)`"),
-    };
+    })
+}
+
+/// Connects and authenticates once, then drops the session without
+/// binding any socket. Used by the wizard to validate a freshly-built
+/// account before printing it.
+#[cfg(all(feature = "imap", feature = "smtp"))]
+#[cfg(any(
+    feature = "rustls-ring",
+    feature = "rustls-aws",
+    feature = "native-tls"
+))]
+pub fn test(url: Url, tls: Tls, starttls: bool, sasl: Option<Sasl>) -> Result<()> {
+    let _ = connect(url, tls, starttls, sasl)?;
+    Ok(())
+}
+
+pub fn start(
+    sock_path: PathBuf,
+    url: Url,
+    tls: Tls,
+    starttls: bool,
+    sasl: Option<Sasl>,
+) -> Result<()> {
+    let s = Spinner::start("Starting remote session");
+    let mut conn = connect(url, tls, starttls, sasl)?;
     s.success("Starting remote session");
 
     let s = Spinner::start("Binding local socket");

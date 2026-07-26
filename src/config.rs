@@ -9,7 +9,7 @@ use pimalaya_stream::{
     },
     tls::{Rustls, RustlsCrypto, Tls, TlsProvider},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -25,18 +25,6 @@ impl Config {
         self.socks_dir
             .join(env!("CARGO_PKG_NAME"))
             .join(format!("{account_name}.sock"))
-    }
-
-    /// Minimal in-memory [`Config`] used as the host for a wizard-built
-    /// [`AccountConfig`]. Only [`Config::socks_dir`] is populated (with
-    /// the same default the on-disk config would have inferred);
-    /// [`Config::accounts`] stays empty since the wizard never writes
-    /// to disk.
-    pub fn default_for_wizard() -> Self {
-        Self {
-            socks_dir: default_socks_dir(),
-            accounts: HashMap::new(),
-        }
     }
 }
 
@@ -61,11 +49,12 @@ impl TomlConfig for Config {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AccountConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub default: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sock_file: Option<PathBuf>,
 
     /// Backend server address as a full `imap://`, `imaps://`,
@@ -78,9 +67,9 @@ pub struct AccountConfig {
     /// back to for a bare authority.
     pub server: String,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default_tls")]
     pub tls: TlsConfig,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub starttls: bool,
     /// ALPN protocol identifiers offered during the TLS handshake.
     /// `None` (field omitted) infers a sensible default from the URL
@@ -88,8 +77,23 @@ pub struct AccountConfig {
     /// `smtp[s]://`. `Some([])` disables ALPN entirely; `Some(["x"])`
     /// overrides with a custom list. Only relevant for the rustls
     /// provider; `native-tls` ignores ALPN.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub alpn: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sasl: Option<SaslConfig>,
+}
+
+/// `skip_serializing_if` predicate for a `bool` field: skips it when
+/// `false`, so a wizard-generated fragment omits the off switches. The
+/// wizard is the only serializer of these types.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// `skip_serializing_if` predicate for the [`TlsConfig`] field: skips it
+/// when left at its default, so the fragment carries no empty TLS block.
+fn is_default_tls(tls: &TlsConfig) -> bool {
+    *tls == TlsConfig::default()
 }
 
 /// Parses an account `server` string into a [`Url`], validating the
@@ -115,29 +119,32 @@ pub fn parse_server(server: &str) -> Result<Url> {
     Ok(url)
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TlsConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<TlsProviderConfig>,
     #[serde(default)]
     pub rustls: RustlsConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cert: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum TlsProviderConfig {
     Rustls,
     NativeTls,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RustlsConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub crypto: Option<RustlsCryptoConfig>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RustlsCryptoConfig {
     Aws,
@@ -177,7 +184,7 @@ impl TlsConfig {
 /// `scram-sha-256` only works at runtime when the `scram` cargo feature
 /// is enabled (it propagates to `io-imap`/`io-smtp`); otherwise the
 /// upstream client returns `ScramSha256NotEnabled`.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum SaslConfig {
     Anonymous(SaslAnonymousConfig),
@@ -189,20 +196,20 @@ pub enum SaslConfig {
     ScramSha256(SaslScramSha256Config),
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslAnonymousConfig {
     pub message: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslLoginConfig {
     pub username: String,
     pub password: Secret,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslPlainConfig {
     pub authzid: Option<String>,
@@ -212,21 +219,21 @@ pub struct SaslPlainConfig {
     pub passwd: Secret,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslOauthbearerConfig {
     pub username: String,
     pub token: Secret,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslXoauth2Config {
     pub username: String,
     pub token: Secret,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslScramSha256Config {
     pub username: String,
