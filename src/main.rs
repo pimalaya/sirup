@@ -72,7 +72,7 @@ fn main() {
 fn execute(cli: Cli, printer: &mut StdoutPrinter) -> Result<()> {
     Logger::try_init(&cli.log)?;
     let config_paths = cli.config_paths.as_ref();
-    cli.command.execute(printer, config_paths, cli.no_account)
+    cli.cmd.execute(printer, config_paths, cli.no_account)
 }
 
 #[derive(Debug, Parser)]
@@ -82,7 +82,7 @@ fn execute(cli: Cli, printer: &mut StdoutPrinter) -> Result<()> {
 #[command(propagate_version = true, infer_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub cmd: Command,
     /// Override the default configuration file path.
     ///
     /// The given paths are shell-expanded then canonicalized (if
