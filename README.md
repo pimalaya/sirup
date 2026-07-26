@@ -7,10 +7,6 @@ CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix socke
 - [Features](#features)
 - [Coverage](#coverage)
 - [Installation](#installation)
-  - [Pre-built binary](#pre-built-binary)
-  - [Cargo](#cargo)
-  - [Nix](#nix)
-  - [Sources](#sources)
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [AI disclosure](#ai-disclosure)
@@ -112,9 +108,9 @@ Sirup never writes your configuration itself; the config stays entirely user-own
 
 A configuration is loaded from the first valid path among:
 
-- $XDG_CONFIG_HOME/sirup/config.toml
-- $HOME/.config/sirup/config.toml
-- $HOME/.siruprc
+- `$XDG_CONFIG_HOME/sirup/config.toml`
+- `$HOME/.config/sirup/config.toml`
+- `$HOME/.siruprc`
 
 Override the path with -c <PATH> or SIRUP_CONFIG=<PATH>; multiple paths can be passed at once, separated by :. The first one is the base and the rest are deep-merged on top. The full field reference lives in [config.sample.toml](./config.sample.toml).
 

@@ -41,11 +41,9 @@ log = "0.4"
 pimalaya-cli = { version = "0.1", default-features = false, features = ["prompt", "spinner", "terminal", "wizard"] }
 pimalaya-config = { version = "0.1", default-features = false, features = ["toml", "secret"] }
 pimalaya-stream = { version = "0.1", default-features = false, features = ["std"] }
-secrecy = "0.10"
-serde = { version = "1", features = ["derive"] }
-url = { version = "2.2", features = ["serde"] }
+secrecy = { version = "0.10", default-features = false, features = ["serde"] }
+serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
+url = { version = "2.2", default-features = false, features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
 uds_windows = "1"
-
-[patch.crates-io]

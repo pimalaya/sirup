@@ -1,3 +1,13 @@
+//! TOML configuration for the `sirup` CLI.
+//!
+//! [`Config`] is the whole config file: a sockets directory plus a table
+//! of named [`AccountConfig`] entries, each carrying a server URL, a TLS
+//! profile, a STARTTLS switch, an optional ALPN override and a single
+//! SASL mechanism. The types derive both `Deserialize` (loading a config)
+//! and `Serialize` (the wizard printing a ready-to-save fragment), so the
+//! `skip_serializing_if` predicates keep defaulted fields out of that
+//! fragment. [`parse_server`] validates a server URL into its protocol.
+
 use std::{collections::HashMap, env::temp_dir, fs, path::PathBuf};
 
 use anyhow::{Result, bail};
@@ -12,15 +22,21 @@ use pimalaya_stream::{
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+/// The whole TOML configuration file.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
+    /// Directory holding every per-account Unix socket. Defaults to the
+    /// runtime dir, falling back to a temp dir when none is found.
     #[serde(default = "default_socks_dir")]
     pub socks_dir: PathBuf,
+    /// The accounts, keyed by the name heading their `[accounts.<name>]`
+    /// table.
     pub accounts: HashMap<String, AccountConfig>,
 }
 
 impl Config {
+    /// Builds the socket path for an account: `<socks_dir>/sirup/<name>.sock`.
     pub fn sock_path(&self, account_name: &str) -> PathBuf {
         self.socks_dir
             .join(env!("CARGO_PKG_NAME"))
@@ -52,11 +68,14 @@ impl TomlConfig for Config {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AccountConfig {
+    /// Whether this account is used when a command runs without `-a`.
+    /// Exactly one account should set it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub default: bool,
+    /// Override for this account's socket path, replacing the
+    /// `<socks_dir>/sirup/<name>.sock` default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sock_file: Option<PathBuf>,
-
     /// Backend server address as a full `imap://`, `imaps://`,
     /// `smtp://` or `smtps://` URL. The scheme picks the protocol
     /// (IMAP vs SMTP) and its `s` suffix selects implicit TLS.
@@ -66,9 +85,11 @@ pub struct AccountConfig {
     /// protocol, so there is no per-protocol default scheme to fall
     /// back to for a bare authority.
     pub server: String,
-
+    /// TLS provider and trust settings for the handshake.
     #[serde(default, skip_serializing_if = "is_default_tls")]
     pub tls: TlsConfig,
+    /// Whether to upgrade a plaintext connection with STARTTLS. Only
+    /// valid with the non-`s` schemes (`imap://`, `smtp://`).
     #[serde(default, skip_serializing_if = "is_false")]
     pub starttls: bool,
     /// ALPN protocol identifiers offered during the TLS handshake.
@@ -79,6 +100,8 @@ pub struct AccountConfig {
     /// provider; `native-tls` ignores ALPN.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alpn: Option<Vec<String>>,
+    /// The SASL mechanism and its credentials. Omit to skip
+    /// authentication entirely.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sasl: Option<SaslConfig>,
 }
@@ -119,35 +142,47 @@ pub fn parse_server(server: &str) -> Result<Url> {
     Ok(url)
 }
 
+/// TLS provider and trust settings for an account.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TlsConfig {
+    /// TLS backend to use; defaults to the first available at runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<TlsProviderConfig>,
+    /// Rustls-specific settings, ignored by the native-tls provider.
     #[serde(default)]
     pub rustls: RustlsConfig,
+    /// Extra root certificate to trust, PEM-encoded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cert: Option<PathBuf>,
 }
 
+/// The selectable TLS backend.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum TlsProviderConfig {
+    /// The Rustls pure-Rust stack.
     Rustls,
+    /// The platform-native TLS stack.
     NativeTls,
 }
 
+/// Rustls-specific settings.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RustlsConfig {
+    /// Crypto backend for Rustls; defaults to the first available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crypto: Option<RustlsCryptoConfig>,
 }
 
+/// The selectable Rustls crypto backend.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RustlsCryptoConfig {
+    /// The aws-lc-rs backend.
     Aws,
+    /// The ring backend.
     Ring,
 }
 
@@ -187,60 +222,88 @@ impl TlsConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum SaslConfig {
+    /// The ANONYMOUS mechanism (RFC 4505), carrying only a trace token.
     Anonymous(SaslAnonymousConfig),
+    /// The obsolete LOGIN mechanism.
     Login(SaslLoginConfig),
+    /// The PLAIN mechanism (RFC 4616).
     Plain(SaslPlainConfig),
+    /// The OAUTHBEARER mechanism (RFC 7628).
     Oauthbearer(SaslOauthbearerConfig),
+    /// Google's pre-standard XOAUTH2 mechanism.
     Xoauth2(SaslXoauth2Config),
+    /// The SCRAM-SHA-256 mechanism (RFC 7677), needing the `scram`
+    /// feature.
     #[serde(rename = "scram-sha-256")]
     ScramSha256(SaslScramSha256Config),
 }
 
+/// Credentials for the ANONYMOUS mechanism.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslAnonymousConfig {
+    /// Optional trace token sent to the server.
     pub message: Option<String>,
 }
 
+/// Credentials for the LOGIN mechanism.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslLoginConfig {
+    /// The login name.
     pub username: String,
+    /// The password secret.
     pub password: Secret,
 }
 
+/// Credentials for the PLAIN mechanism.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslPlainConfig {
+    /// Optional authorization identity to act as.
     pub authzid: Option<String>,
+    /// Authentication identity (the login), also accepted as `username`.
     #[serde(alias = "username")]
     pub authcid: String,
+    /// The password secret, also accepted as `password`.
     #[serde(alias = "password")]
     pub passwd: Secret,
 }
 
+/// Credentials for the OAUTHBEARER mechanism.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslOauthbearerConfig {
+    /// The account username.
     pub username: String,
+    /// The OAuth 2.0 bearer token secret.
     pub token: Secret,
 }
 
+/// Credentials for the XOAUTH2 mechanism.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslXoauth2Config {
+    /// The account username.
     pub username: String,
+    /// The OAuth 2.0 access token secret.
     pub token: Secret,
 }
 
+/// Credentials for the SCRAM-SHA-256 mechanism.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslScramSha256Config {
+    /// The login name.
     pub username: String,
+    /// The password secret.
     pub password: Secret,
 }
 
 impl SaslConfig {
+    /// Resolves the config into a runtime [`Sasl`], reading any
+    /// command-backed secret. `host` and `port` seed the OAUTHBEARER GS2
+    /// header; the other mechanisms ignore them.
     pub fn try_into_sasl(self, host: impl ToString, port: u16) -> Result<Sasl> {
         Ok(match self {
             SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymous { message: c.message }),

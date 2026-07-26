@@ -107,8 +107,8 @@ pub fn run(printer: &mut impl Printer) -> Result<()> {
     let name = default_account_name(input);
     let account = build_account(input, &name)?;
 
-    // Test the account before printing it, exactly like himalaya: a bad
-    // credential or endpoint fails here and stops the process, rather
+    // NOTE: test the account before printing it, exactly like himalaya, so
+    // a bad credential or endpoint fails here and stops the process rather
     // than emitting a config that cannot connect.
     let spinner = Spinner::start("Testing account configuration");
     if let Err(err) = crate::test_account(&account) {
@@ -200,7 +200,6 @@ fn build_url_account(url: Url, account_name: &str) -> Result<AccountConfig> {
     }
 
     match scheme.as_str() {
-        // Direct IMAP/SMTP URL: use as-is, just prompt for SASL.
         "imap" | "imaps" | "smtp" | "smtps" => {
             let starttls = matches!(scheme.as_str(), "imap" | "smtp");
             let sasl = prompt_sasl(account_name, None)?;
@@ -378,8 +377,8 @@ fn build_imap_account(endpoint: WizardImapConfig, sasl: SaslConfig) -> AccountCo
     let server = format!("{scheme}://{}:{}", endpoint.host, endpoint.port);
 
     AccountConfig {
-        // Left non-default like himalaya (see build_url_account); omitted
-        // from the fragment while false.
+        // NOTE: left non-default like himalaya (see build_url_account), so
+        // it is omitted from the fragment while false.
         default: false,
         sock_file: None,
         server,
@@ -398,8 +397,8 @@ fn build_smtp_account(endpoint: WizardSmtpConfig, sasl: SaslConfig) -> AccountCo
     let server = format!("{scheme}://{}:{}", endpoint.host, endpoint.port);
 
     AccountConfig {
-        // Left non-default like himalaya (see build_url_account); omitted
-        // from the fragment while false.
+        // NOTE: left non-default like himalaya (see build_url_account), so
+        // it is omitted from the fragment while false.
         default: false,
         sock_file: None,
         server,
@@ -494,8 +493,8 @@ mod tests {
         assert!(rendered.contains("server = \"imaps://mail.example.com:993\""));
         assert!(rendered.contains("sasl.plain.authcid = \"alice@example.com\""));
         assert!(rendered.contains("sasl.plain.passwd.raw = \"s3cret\""));
-        // A non-default account, a false switch and a default TLS block are
-        // all omitted from the fragment (himalaya-style).
+        // NOTE: a non-default account, a false switch and a default TLS
+        // block are all omitted from the fragment (himalaya-style).
         assert!(!rendered.contains("default"));
         assert!(!rendered.contains("starttls"));
         assert!(!rendered.contains("provider"));

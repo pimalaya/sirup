@@ -1,3 +1,14 @@
+//! The socket-proxy daemon.
+//!
+//! [`start`] opens and authenticates the upstream IMAP or SMTP session
+//! once, binds a per-account Unix socket, replaces the protocol greeting
+//! with a pre-authenticated one, then proxies raw bytes both ways while
+//! issuing a periodic NOOP to keep the upstream alive during idle. The
+//! [`Session`] enum wraps the concrete protocol client and exposes the
+//! stream controls the proxy loop needs. [`test()`] reuses the same
+//! connect path to validate an account without binding a socket, for the
+//! wizard.
+
 #[cfg(feature = "smtp")]
 use std::net::Ipv4Addr;
 #[cfg(unix)]
@@ -39,14 +50,24 @@ use pimalaya_stream::{sasl::Sasl, tls::Tls};
 use uds_windows::{UnixListener, UnixStream};
 use url::Url;
 
+/// An authenticated upstream session, one variant per protocol.
+///
+/// Wraps the concrete protocol client behind the read, write and stream
+/// controls the proxy loop drives. The `Invalid` variant only exists to
+/// keep the type inhabited when neither protocol feature is enabled.
 pub enum Session {
+    /// An authenticated IMAP session and the capabilities the upstream
+    /// advertised, replayed in the synthesized PREAUTH greeting.
     #[cfg(feature = "imap")]
     Imap {
         client: ImapClientStd,
         capability: Vec<Capability<'static>>,
     },
+    /// An authenticated SMTP submission session.
     #[cfg(feature = "smtp")]
     Smtp(SmtpClientStd),
+    /// Placeholder keeping the enum inhabited when no protocol feature is
+    /// enabled.
     #[cfg(not(feature = "imap"))]
     #[cfg(not(feature = "smtp"))]
     Invalid,
@@ -160,7 +181,7 @@ impl Write for Session {
 
 /// Opens and authenticates the upstream session, selecting the protocol
 /// from the URL scheme (`imap`/`imaps` or `smtp`/`smtps`). Shared by
-/// [`start`] and [`test`].
+/// [`start`] and [`test()`].
 fn connect(url: Url, tls: Tls, starttls: bool, sasl: Option<Sasl>) -> Result<Session> {
     Ok(match url.scheme() {
         #[cfg(feature = "imap")]
@@ -322,7 +343,7 @@ pub fn start(
 /// the borrow of the long-lived `server` session local to this call.
 fn proxy(server: &mut Session, client: &mut UnixStream) -> Result<()> {
     server.set_nonblocking(true)?;
-    // The client is accepted from a non-blocking listener; pin it to
+    // NOTE: the client is accepted from a non-blocking listener; pin it to
     // blocking so its read parks instead of spinning.
     client.set_nonblocking(false)?;
 
@@ -381,7 +402,6 @@ fn upstream_pump(
     'pump: while running.load(Ordering::Relaxed) {
         let mut idle = true;
 
-        // Upstream -> client (non-blocking; drain what is ready).
         loop {
             match server.read(&mut buf) {
                 Ok(0) => break 'pump,
@@ -400,7 +420,6 @@ fn upstream_pump(
             }
         }
 
-        // Client -> upstream (drain the channel).
         loop {
             match rx.try_recv() {
                 Ok(chunk) => {
@@ -420,8 +439,8 @@ fn upstream_pump(
         }
     }
 
-    // Restore blocking for the idle keepalive NOOP, then wake the client
-    // reader parked on its blocking read.
+    // NOTE: restore blocking for the idle keepalive NOOP, then wake the
+    // client reader parked on its blocking read by shutting the socket.
     let _ = server.set_nonblocking(false);
     running.store(false, Ordering::Relaxed);
     let _ = client.shutdown(Shutdown::Both);

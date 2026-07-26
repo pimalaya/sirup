@@ -30,8 +30,11 @@
 //! ## Features
 //!
 //! Protocol support (imap, smtp) and the TLS provider (rustls-ring,
-//! rustls-aws, native-tls) are cargo features; the wizard needs both
+//! rustls-aws, native-tls) are cargo features. The wizard needs both
 //! protocols and a TLS provider to be enabled.
+//!
+//! The design memory lives in the cairn/ folder (the Cairn convention:
+//! spec/ for current truth, changes/ for proposals, log/ for history).
 
 mod config;
 mod repl;
@@ -78,7 +81,6 @@ fn execute(cli: Cli, printer: &mut StdoutPrinter) -> Result<()> {
     let account_name = cli.account.name.as_deref();
 
     match cli.cmd {
-        // Bare `sirup` (no subcommand) runs the wizard.
         Some(cmd) => cmd.execute(printer, config_paths, account_name),
         None => wizard_run(printer),
     }
@@ -105,10 +107,13 @@ pub struct Cli {
     #[arg(short, long = "config", global = true, env = "SIRUP_CONFIG")]
     #[arg(value_name = "PATH", value_parser = path_parser, value_delimiter = ':')]
     pub config_paths: Vec<PathBuf>,
+    /// Name of the account to run the command with.
     #[command(flatten)]
     pub account: AccountFlag,
+    /// Switch the output format to JSON.
     #[command(flatten)]
     pub json: JsonFlag,
+    /// Log level and log file destination.
     #[command(flatten)]
     pub log: LogFlags,
 }
@@ -118,9 +123,9 @@ pub enum Command {
     /// Start a pre-authenticated IMAP/SMTP session for the given account,
     /// proxied to a Unix socket.
     ///
-    /// The protocol is selected from the account's server scheme (`imap`/`imaps`
-    /// or `smtp`/`smtps`). This command runs as a blocking daemon; best place
-    /// is inside a systemd service or equivalent.
+    /// The protocol is selected from the account's server scheme
+    /// (`imap`/`imaps` or `smtp`/`smtps`). This command runs as a blocking
+    /// daemon, best placed inside a systemd service or equivalent.
     Start,
     /// Start a basic REPL against the pre-authenticated session for the given
     /// account.

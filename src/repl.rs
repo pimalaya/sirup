@@ -1,8 +1,18 @@
+//! The `repl` reference client.
+//!
+//! A minimal interactive client that attaches to the Unix socket a
+//! running [`crate::session`] daemon exposes and forwards raw protocol
+//! lines both ways. It is a testing aid and a worked example of driving
+//! the socket. One submodule per protocol, since IMAP tags its commands
+//! while SMTP does not.
+
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use url::Url;
 
+/// Attaches the reference client to the session socket, dispatching to
+/// the protocol submodule picked from the server URL scheme.
 pub fn start(sock_path: PathBuf, url: Url) -> Result<()> {
     match url.scheme() {
         #[cfg(feature = "imap")]
@@ -17,6 +27,8 @@ pub fn start(sock_path: PathBuf, url: Url) -> Result<()> {
     }
 }
 
+/// IMAP reference client: prefixes each command with a generated tag and
+/// reassembles the tagged responses off the socket.
 #[cfg(feature = "imap")]
 pub mod imap {
     #[cfg(unix)]
@@ -34,6 +46,8 @@ pub mod imap {
     #[cfg(windows)]
     use uds_windows::UnixStream;
 
+    /// Connects to `sock_path` and relays tagged IMAP commands and their
+    /// responses between stdin/stdout and the socket.
     pub fn start(sock_path: PathBuf) -> Result<()> {
         let mut stream = UnixStream::connect(&sock_path)?;
 
@@ -79,6 +93,8 @@ pub mod imap {
     }
 }
 
+/// SMTP reference client: reads the multi-line greeting and replies,
+/// forwarding untagged command lines to the socket.
 #[cfg(feature = "smtp")]
 pub mod smtp {
     #[cfg(unix)]
@@ -92,6 +108,8 @@ pub mod smtp {
     #[cfg(windows)]
     use uds_windows::UnixStream;
 
+    /// Connects to `sock_path` and relays SMTP command lines and their
+    /// possibly multi-line replies between stdin/stdout and the socket.
     pub fn start(sock_path: PathBuf) -> Result<()> {
         let stream = UnixStream::connect(&sock_path)?;
         let mut reader = BufReader::new(stream.try_clone()?);
