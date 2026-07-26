@@ -55,7 +55,23 @@ Discovery also covers the [PACC](https://datatracker.ietf.org/doc/html/draft-iet
 
 ### Pre-built binary
 
-Sirup has no stable release yet. Pre-built binaries from the master branch are available through the [releases](https://github.com/pimalaya/sirup/actions/workflows/releases.yml) GitHub workflow: open the latest run and look for the *Artifacts* section.
+Sirup can be installed with the installer:
+
+*As root:*
+
+```sh
+curl -sSL https://raw.githubusercontent.com/pimalaya/sirup/master/install.sh | sudo sh
+```
+
+*As a regular user:*
+
+```sh
+curl -sSL https://raw.githubusercontent.com/pimalaya/sirup/master/install.sh | PREFIX=~/.local sh
+```
+
+These commands install the latest binary from the GitHub [releases](https://github.com/pimalaya/sirup/releases) section.
+
+For a more up-to-date version than the latest release, check out the [releases](https://github.com/pimalaya/sirup/actions/workflows/releases.yml) GitHub workflow and look for the *Artifacts* section. These pre-built binaries are built from the master branch.
 
 > [!NOTE]
 > Such binaries are built with the default cargo features. If you need specific features, please use another installation method.
@@ -137,7 +153,7 @@ This project is developed with AI assistance. This section documents how, so use
 - **Not used for**: Engineering, critical code, git manipulation (commit, merge, rebase…), real-world tests.
 - **Verification**: Every AI-assisted change is read, compiled, tested, and formatted before commit. Behavioural correctness is verified against the relevant RFC or upstream spec, not assumed from the model output. Tests are never adjusted to fit AI-generated code; the code is adjusted to fit correct behaviour.
 - **Limitations**: AI models occasionally produce code that compiles and passes tests but is subtly wrong. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken seriously.
-- **Last reviewed**: 17/07/2026
+- **Last reviewed**: 26/07/2026
 
 ## License
 

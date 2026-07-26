@@ -6,12 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-26
+
 ### Added
 
-- Added the `start` command, spawning a pre-authenticated IMAP or SMTP session and exposing it on a Unix socket.
+- Added the `start` command: opens and authenticates an IMAP or SMTP session once, then proxies it over a per-account Unix socket so local clients speak the raw protocol without holding the credentials or repeating the handshake.
 - Added the `repl` command, a reference client that forwards raw commands to the socket-backed session.
+- Added the account wizard, run by bare `sirup` (no subcommand).
+
+  Resolves an account from an email, URL or domain through PACC, Thunderbird Autoconfig and RFC 6186 SRV discovery (IMAP and SMTP only), prompts for secrets through the OS keyring, a command or a raw value, tests the account by connecting once, then prints a ready-to-save `[accounts.<name>]` fragment on stdout (`sirup >> <config>` appends it), or a JSON object with `--json`.
+
 - Added TOML configuration with per-account server address, TLS, STARTTLS, ALPN and SASL settings.
-- Added a wizard, run on bare `sirup` (no subcommand), resolving accounts through PACC, Thunderbird Autoconfig and RFC 6186 SRV discovery (IMAP and SMTP only), prompting for secrets through the OS keyring / command / raw picker, testing the account by connecting once, then printing the result as a ready-to-save config fragment on stdout.
 - Added TLS support (rustls-ring, rustls-aws, native-tls) and SASL support (anonymous, login, plain, oauthbearer, xoauth2, scram-sha-256).
 
-[unreleased]: https://github.com/pimalaya/sirup/compare/root..HEAD
+[unreleased]: https://github.com/pimalaya/sirup/compare/v0.1.0...master
+[0.1.0]: https://github.com/pimalaya/sirup/compare/root...v0.1.0
