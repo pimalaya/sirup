@@ -47,3 +47,40 @@ Before it errors, a command needing an account SHALL offer to generate a configu
 - GIVEN `socks-dir = "~/run"`
 - WHEN the configuration is read
 - THEN the value is the absolute path under the home directory, not a relative one under a directory named `~`
+
+### Requirement: One server per protocol
+An account SHALL declare one server block per protocol it speaks, `imap` and `smtp`, each carrying that protocol's own server address, socket override, TLS profile, STARTTLS switch, ALPN override and SASL mechanism. An account is a mailbox rather than a session, which is the shape every other Pimalaya binary reads.
+
+#### Scenario: One mailbox, two protocols
+- GIVEN a provider serving both IMAP and SMTP
+- WHEN the user configures it
+- THEN one `[accounts.<name>]` table declares both blocks, rather than two accounts declaring one server each
+
+### Requirement: An account declaring no block is named
+An account declaring neither block SHALL be refused naming the blocks it could declare and the documented sample, rather than serving nothing.
+
+#### Scenario: Empty account
+- GIVEN an account carrying only `default = true`
+- WHEN `sirup start` runs against it
+- THEN it fails naming the `imap` and `smtp` blocks and the sample
+
+### Requirement: The scheme is optional
+A block's `server` SHALL accept a bare authority, taking the protocol's implicit-TLS scheme (`imaps://`, `smtps://`), and a full URL verbatim. A scheme the block's protocol does not speak SHALL be rejected naming the ones it does.
+
+#### Scenario: Bare authority
+- GIVEN `imap.server = "imap.example.com"`
+- WHEN the connection is resolved
+- THEN it reaches `imaps://imap.example.com:993`
+
+#### Scenario: Scheme of another protocol
+- GIVEN `smtp.server = "imaps://mail.example.com"`
+- WHEN the connection is resolved
+- THEN it fails naming `smtp.server` and the schemes SMTP speaks
+
+### Requirement: One secret resolver per account
+An account SHALL resolve every secret its blocks name through a single memoizing resolver, so one credential command named by two blocks is spawned once. The resolver holds the plaintext for its lifetime, so it SHALL be dropped once every session is open.
+
+#### Scenario: Both blocks name one entry
+- GIVEN an account whose `imap` and `smtp` blocks both name `["pass", "show", "fastmail"]`
+- WHEN `sirup start` opens both sessions
+- THEN `pass` is spawned once, so a locked key is unlocked a single time

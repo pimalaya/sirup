@@ -40,6 +40,51 @@ Sirup SHALL run as a long-lived daemon, one instance per account, so the cost of
 - WHEN `sirup start` runs
 - THEN the wizard is offered, and the command still fails naming the path it looked for when no configuration follows
 
+### Requirement: `start` serves the protocols it is given, or all of them
+`start` SHALL take the protocols to serve as a positional list, defaulting to every block the account declares, and SHALL bind one socket per protocol served. A protocol asked for but not declared SHALL be refused naming the blocks the account does declare, rather than serving a silently shorter list.
+
+#### Scenario: Whole account
+- GIVEN an account declaring an `imap` and an `smtp` block
+- WHEN `sirup start` runs
+- THEN both sessions are served, each on its own socket, from one process
+
+#### Scenario: One protocol named
+- GIVEN the same account
+- WHEN `sirup start imap` runs
+- THEN only the IMAP socket is bound, which is what a per-protocol service unit wants
+
+### Requirement: Open everything before binding anything
+Every upstream SHALL be opened and authenticated before any socket is bound, one at a time so their progress reports do not interleave. An upstream that cannot open SHALL abort the whole run, leaving no socket bound behind it.
+
+#### Scenario: One provider refuses
+- GIVEN an account declaring two blocks, one of which the provider rejects
+- WHEN `sirup start` runs
+- THEN it fails naming that protocol and no socket was bound for either
+
+### Requirement: The first failure ends the run
+Once serving, each protocol SHALL run its own accept loop and its own keepalive cadence, and the first one to fail SHALL end the whole run. A daemon that kept serving its other protocols would leave its supervisor reading the unit as healthy while a part of it is dead, with nothing left to restart it.
+
+#### Scenario: One upstream drops
+- GIVEN a daemon serving two protocols
+- WHEN one upstream stops answering its keepalive
+- THEN the process exits with that error rather than serving half an account
+
+### Requirement: The socket path carries the protocol
+The socket a protocol is served on SHALL be `<socks-dir>/sirup/<account>-<protocol>.sock`, and a `sock-file` in the block SHALL override the whole path. An account serving several protocols binds several sockets, so the account name alone cannot name one.
+
+#### Scenario: Two sockets for one account
+- GIVEN the `fastmail` account declaring both blocks
+- WHEN `sirup start` runs
+- THEN it binds `fastmail-imap.sock` and `fastmail-smtp.sock` under the sirup directory
+
+### Requirement: `repl` attaches to exactly one protocol
+`repl` SHALL take one protocol, required when the account declares more than one, since a single standard input cannot drive two sessions. An account declaring exactly one block needs no argument.
+
+#### Scenario: Several blocks, no protocol given
+- GIVEN an account declaring both blocks
+- WHEN `sirup repl` runs
+- THEN it fails naming the blocks to pick from
+
 ### Requirement: Single concrete stream downcast
 The protocol clients box their stream as a trait object to stay transport-agnostic. Sirup always opens its streams through `pimalaya-stream`, so the concrete type is always its `Stream`. To reach the stream controls the proxy loop drives, Sirup SHALL downcast the boxed stream back to `Stream`. The downcast is infallible by construction and SHALL be documented as such at the call site.
 

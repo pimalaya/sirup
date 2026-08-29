@@ -297,7 +297,10 @@ mod tests {
     use secrecy::SecretString;
 
     use super::*;
-    use crate::config::{SaslConfig, SaslPlainConfig, TlsConfig};
+    use crate::{
+        config::{SaslConfig, SaslPlainConfig, ServerConfig, TlsConfig},
+        protocol::Protocol,
+    };
 
     static NEXT_CONFIG: AtomicUsize = AtomicUsize::new(0);
 
@@ -307,20 +310,29 @@ mod tests {
         env::temp_dir().join(format!("sirup-configure-{id}.toml"))
     }
 
-    /// The account the wizard builds: one server, one SASL mechanism.
-    fn account(default: bool) -> AccountConfig {
-        AccountConfig {
-            default,
+    /// One block, as the wizard builds it from a discovered endpoint.
+    fn server(host: &str) -> ServerConfig {
+        ServerConfig {
+            server: host.into(),
             sock_file: None,
-            server: "imaps://mail.example.com:993".into(),
             tls: TlsConfig::default(),
-            alpn: None,
             starttls: false,
+            alpn: None,
             sasl: Some(SaslConfig::Plain(SaslPlainConfig {
                 authzid: None,
                 authcid: "alice@example.com".into(),
                 passwd: Secret::Raw(SecretString::from("s3cret")),
             })),
+        }
+    }
+
+    /// The account the wizard builds when discovery returns both
+    /// endpoints: one mailbox, two blocks sharing one credential.
+    fn account(default: bool) -> AccountConfig {
+        AccountConfig {
+            default,
+            imap: Some(server("imaps://imap.example.com:993")),
+            smtp: Some(server("smtps://smtp.example.com:465")),
         }
     }
 
@@ -332,7 +344,7 @@ mod tests {
 
         assert_eq!(config.accounts.len(), 1);
         assert!(account.default);
-        assert_eq!(account.server, "imaps://mail.example.com:993");
+        assert_eq!(account.protocols(), [Protocol::Imap, Protocol::Smtp]);
 
         // NOTE: a generated document holds what was configured, every
         // defaulted field being left out.
@@ -341,7 +353,37 @@ mod tests {
 
         let lines: Vec<&str> = document.lines().collect();
         assert_eq!(lines[0], "[accounts.example]");
-        assert_eq!(lines[1], "server = \"imaps://mail.example.com:993\"");
+        assert_eq!(lines[1], "default = true");
+    }
+
+    #[test]
+    fn each_block_opens_on_its_server() {
+        // NOTE: serialized alphabetically the two blocks would interleave
+        // and each endpoint would sit under the credentials qualifying
+        // it, so the renderer groups and lifts.
+        let document = account(true).render("example").expect("render the account");
+        let servers: Vec<&str> = document
+            .lines()
+            .filter(|line| line.contains(".server "))
+            .collect();
+
+        assert_eq!(
+            servers,
+            [
+                "imap.server = \"imaps://imap.example.com:993\"",
+                "smtp.server = \"smtps://smtp.example.com:465\"",
+            ]
+        );
+
+        let imap = document.find("imap.server").expect("an imap server line");
+        let imap_sasl = document.find("imap.sasl").expect("an imap sasl line");
+        let smtp = document.find("smtp.server").expect("an smtp server line");
+
+        assert!(
+            imap < imap_sasl,
+            "the endpoint reads before its credentials"
+        );
+        assert!(imap_sasl < smtp, "a block is not split by another one");
     }
 
     #[test]
@@ -352,7 +394,7 @@ mod tests {
         // survives without merging into the last line.
         fs::write(
             &path,
-            "# my accounts\n[accounts.work]\ndefault = true\nserver = \"imaps://work.example.com\"",
+            "# my accounts\n[accounts.work]\ndefault = true\nimap.server = \"work.example.com\"",
         )
         .expect("write the existing config");
 

@@ -6,12 +6,13 @@
 //!    from the URL, no extra prompt.
 //! 3. Email / domain input: probe PACC → Autoconfig ISP (when an email
 //!    was given) → Autoconfig ISP-fallback → Autoconfig ISPDB → RFC
-//!    6186 SRV; first non-empty wins. If both IMAP and SMTP come back,
-//!    ask which one to start.
-//! 4. Prompt the SASL mechanism plus only the fields it needs; secrets
-//!    go through the shared keyring/command/raw picker.
-//! 5. Test the account by connecting once, then hand it back with the
-//!    name it suggests. What becomes of it belongs to
+//!    6186 SRV; first non-empty wins. Whatever comes back is kept, an
+//!    account declaring as many blocks as it speaks protocols.
+//! 4. Prompt the SASL mechanism plus only the fields it needs, once for
+//!    the whole account; secrets go through the shared
+//!    keyring/command/raw picker.
+//! 5. Test every block by connecting once, then hand the account back
+//!    with the name it suggests. What becomes of it belongs to
 //!    [`crate::wizard::configure`].
 
 use std::env;
@@ -26,14 +27,16 @@ use pimalaya_cli::{
         smtp::{Encryption as SmtpEncryption, WizardSmtpConfig},
     },
 };
+use pimalaya_config::secret::SecretResolver;
 use pimalaya_stream::tls::Tls;
 use url::Url;
 
 use crate::{
     config::{
         AccountConfig, SaslAnonymousConfig, SaslConfig, SaslLoginConfig, SaslOauthbearerConfig,
-        SaslPlainConfig, SaslScramSha256Config, SaslXoauth2Config, TlsConfig,
+        SaslPlainConfig, SaslScramSha256Config, SaslXoauth2Config, ServerConfig, TlsConfig,
     },
+    protocol::Protocol,
     session,
     wizard::{autoconfig, pacc, secret, srv},
 };
@@ -106,16 +109,25 @@ pub fn run() -> Result<(String, AccountConfig)> {
     let name = default_account_name(input);
     let account = build_account(input, &name)?;
 
-    // NOTE: test the account before handing it back, exactly like
-    // himalaya, so a bad credential or endpoint fails here rather than
-    // landing in a configuration that cannot connect.
-    let (server, tls, starttls, sasl) = account.resolve_connection()?;
-    let spinner = Spinner::start("Testing account configuration");
-    if let Err(err) = session::test(server, tls, starttls, sasl) {
-        spinner.failure("Account configuration test failed");
-        return Err(err);
+    // NOTE: test every block before handing the account back, exactly
+    // like himalaya, so a bad credential or endpoint fails here rather
+    // than landing in a configuration that cannot connect. One resolver
+    // for the whole account, so a credential command both blocks name is
+    // spawned once.
+    let mut secrets = SecretResolver::new();
+
+    for protocol in account.protocols() {
+        let server = account.server(protocol).expect("declared block exists");
+        let (url, tls, starttls, sasl) = server.resolve_connection(protocol, &mut secrets)?;
+        let spinner = Spinner::start(format!("Testing the {protocol} configuration"));
+
+        if let Err(err) = session::test(protocol, url, tls, starttls, sasl) {
+            spinner.failure(format!("The {protocol} configuration failed"));
+            return Err(err);
+        }
+
+        spinner.success(format!("The {protocol} configuration is valid"));
     }
-    spinner.success("Account configuration is valid");
 
     Ok((name, account))
 }
@@ -191,90 +203,83 @@ fn classify(input: &str) -> Result<Input> {
 }
 
 /// Builds an account straight from an `imap[s]://` / `smtp[s]://` URL:
-/// validates the scheme and host, derives STARTTLS from the plain
-/// scheme, then prompts only for the SASL credentials.
+/// validates the scheme and host, derives the protocol and the STARTTLS
+/// switch from the scheme, then prompts only for the SASL credentials.
+///
+/// A URL names one endpoint, so the account it builds declares the one
+/// block that URL is about; a second protocol is a second `configure`
+/// run, or a block written by hand.
 fn build_url_account(url: Url, account_name: &str) -> Result<AccountConfig> {
     let scheme = url.scheme().to_ascii_lowercase();
+
     if url.host_str().is_none() {
         bail!("URL `{url}` is missing a host")
     }
 
-    match scheme.as_str() {
-        "imap" | "imaps" | "smtp" | "smtps" => {
-            let starttls = matches!(scheme.as_str(), "imap" | "smtp");
-            let sasl = prompt_sasl(account_name, None)?;
-            Ok(AccountConfig {
-                // NOTE: claiming the default is a property of the
-                // whole accounts table, so it is decided when the
-                // account is saved, not when it is built.
-                default: false,
-                sock_file: None,
-                server: url.to_string(),
-                tls: TlsConfig::default(),
-                alpn: None,
-                starttls,
-                sasl: Some(sasl),
-            })
-        }
-        other => bail!("Unsupported URL scheme `{other}`, expects `imap(s)` or `smtp(s)`"),
-    }
+    let protocol = Protocol::ALL
+        .into_iter()
+        .find(|protocol| protocol.schemes().contains(&scheme.as_str()));
+
+    let Some(protocol) = protocol else {
+        bail!("Unsupported URL scheme `{scheme}`, expects `imap(s)` or `smtp(s)`");
+    };
+
+    let server = ServerConfig {
+        server: url.to_string(),
+        sock_file: None,
+        tls: TlsConfig::default(),
+        starttls: scheme != protocol.default_scheme(),
+        alpn: None,
+        sasl: Some(prompt_sasl(account_name, None)?),
+    };
+
+    // NOTE: claiming the default is a property of the whole accounts
+    // table, so it is decided when the account is saved, not when it is
+    // built.
+    Ok(match protocol {
+        Protocol::Imap => AccountConfig {
+            imap: Some(server),
+            ..Default::default()
+        },
+        Protocol::Smtp => AccountConfig {
+            smtp: Some(server),
+            ..Default::default()
+        },
+    })
 }
 
-/// Builds an account from a discovered endpoint: runs the first-hit
-/// discovery chain over the domain, picks the protocol (prompting only
-/// when both IMAP and SMTP come back), then prompts for the SASL
-/// credentials. Bails when nothing is discovered.
+/// Builds an account from the discovered endpoints: runs the first-hit
+/// discovery chain over the domain, then prompts once for the SASL
+/// credentials both blocks share. Bails when nothing is discovered.
+///
+/// Whatever discovery returns is kept: an account speaks as many
+/// protocols as it declares, so there is nothing to choose between and
+/// no prompt asking which endpoint to throw away.
 fn build_discovery_account(
     local_part: Option<&str>,
     domain: &str,
     account_name: &str,
 ) -> Result<AccountConfig> {
-    let result = discover(local_part, domain);
-    if result.is_empty() {
+    let DiscoveryResult { imap, smtp } = discover(local_part, domain);
+
+    if imap.is_none() && smtp.is_none() {
         bail!(
             "No configuration could be discovered for `{domain}`. \
              Try giving an `imap[s]://` or `smtp[s]://` URL instead."
         );
     }
 
-    let DiscoveryResult { imap, smtp } = result;
+    // NOTE: one provider, one credential, so the mechanism is prompted
+    // once and both blocks carry it. A user needing two writes the
+    // second by hand, which is what the sample documents.
     let login_default = local_part.map(|l| format!("{l}@{domain}"));
+    let sasl = prompt_sasl(account_name, login_default.as_deref())?;
 
-    let protocol = choose_protocol(imap.is_some(), smtp.is_some())?;
-    match protocol {
-        Protocol::Imap => {
-            let endpoint = imap.expect("imap endpoint must be present when chosen");
-            let sasl = prompt_sasl(account_name, login_default.as_deref())?;
-            Ok(build_imap_account(endpoint, sasl))
-        }
-        Protocol::Smtp => {
-            let endpoint = smtp.expect("smtp endpoint must be present when chosen");
-            let sasl = prompt_sasl(account_name, login_default.as_deref())?;
-            Ok(build_smtp_account(endpoint, sasl))
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Protocol {
-    Imap,
-    Smtp,
-}
-
-fn choose_protocol(has_imap: bool, has_smtp: bool) -> Result<Protocol> {
-    match (has_imap, has_smtp) {
-        (true, false) => Ok(Protocol::Imap),
-        (false, true) => Ok(Protocol::Smtp),
-        (true, true) => {
-            let pick = prompt::item("Protocol to start:", ["IMAP", "SMTP"], Some("IMAP"))?;
-            Ok(if pick == "IMAP" {
-                Protocol::Imap
-            } else {
-                Protocol::Smtp
-            })
-        }
-        (false, false) => bail!("Discovery returned no IMAP nor SMTP endpoint"),
-    }
+    Ok(AccountConfig {
+        default: false,
+        imap: imap.map(|endpoint| build_imap_server(endpoint, sasl.clone())),
+        smtp: smtp.map(|endpoint| build_smtp_server(endpoint, sasl.clone())),
+    })
 }
 
 /// Probes PACC → Autoconfig ISP (when `local_part` is `Some`) →
@@ -366,38 +371,42 @@ fn prompt_sasl(account_name: &str, login_default: Option<&str>) -> Result<SaslCo
     })
 }
 
-/// Assembles an IMAP account from a discovered endpoint, deriving the
+/// Assembles the `imap` block from a discovered endpoint, deriving the
 /// scheme and STARTTLS switch from its encryption.
-fn build_imap_account(endpoint: WizardImapConfig, sasl: SaslConfig) -> AccountConfig {
+fn build_imap_server(endpoint: WizardImapConfig, sasl: SaslConfig) -> ServerConfig {
     let starttls = matches!(endpoint.encryption, ImapEncryption::StartTls);
-    let scheme = if starttls { "imap" } else { "imaps" };
-    let server = format!("{scheme}://{}:{}", endpoint.host, endpoint.port);
-
-    AccountConfig {
-        default: false,
-        sock_file: None,
-        server,
-        tls: TlsConfig::default(),
-        alpn: None,
-        starttls,
-        sasl: Some(sasl),
-    }
+    build_server(Protocol::Imap, endpoint.host, endpoint.port, starttls, sasl)
 }
 
-/// Assembles an SMTP account from a discovered endpoint, deriving the
+/// Assembles the `smtp` block from a discovered endpoint, deriving the
 /// scheme and STARTTLS switch from its encryption.
-fn build_smtp_account(endpoint: WizardSmtpConfig, sasl: SaslConfig) -> AccountConfig {
+fn build_smtp_server(endpoint: WizardSmtpConfig, sasl: SaslConfig) -> ServerConfig {
     let starttls = matches!(endpoint.encryption, SmtpEncryption::StartTls);
-    let scheme = if starttls { "smtp" } else { "smtps" };
-    let server = format!("{scheme}://{}:{}", endpoint.host, endpoint.port);
+    build_server(Protocol::Smtp, endpoint.host, endpoint.port, starttls, sasl)
+}
 
-    AccountConfig {
-        default: false,
+/// Assembles one block, writing the scheme out rather than leaning on the
+/// protocol default: a discovered endpoint says which encryption it
+/// wants, and a generated configuration should say so too.
+fn build_server(
+    protocol: Protocol,
+    host: String,
+    port: u16,
+    starttls: bool,
+    sasl: SaslConfig,
+) -> ServerConfig {
+    let scheme = if starttls {
+        protocol.as_str()
+    } else {
+        protocol.default_scheme()
+    };
+
+    ServerConfig {
+        server: format!("{scheme}://{host}:{port}"),
         sock_file: None,
-        server,
         tls: TlsConfig::default(),
-        alpn: None,
         starttls,
+        alpn: None,
         sasl: Some(sasl),
     }
 }

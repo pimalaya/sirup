@@ -14,7 +14,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- **BREAKING**: an account declares one server per protocol rather than a single one. `server`, `sock-file`, `tls`, `starttls`, `alpn` and `sasl` move from the account into an `imap` or an `smtp` block, which is the shape himalaya and the other Pimalaya tools already read, so one mailbox is one account instead of two:
+
+  ```toml
+  [accounts.fastmail]
+  imap.server = "imap.fastmail.com"
+  imap.sasl.plain.username = "you@fastmail.com"
+  imap.sasl.plain.password.command = ["pass", "show", "fastmail"]
+  smtp.server = "smtp.fastmail.com"
+  smtp.sasl.plain.username = "you@fastmail.com"
+  smtp.sasl.plain.password.command = ["pass", "show", "fastmail"]
+  ```
+
+  `start` takes the protocols to serve as a positional list, defaulting to every one the account declares: a bare `sirup start` serves the whole account and `sirup start imap` serves the one block, which is what a per-protocol service unit wants. Every session is opened and authenticated before any socket is bound, so a provider refusing one leaves nothing half-served, and the first session to fail afterwards ends the whole run rather than leaving a supervisor reading the unit as healthy. `repl` takes one protocol, required when the account declares more than one.
+
+- **BREAKING**: the socket path carries the protocol: `<socks-dir>/sirup/<account>.sock` becomes `<socks-dir>/sirup/<account>-<protocol>.sock`, and `sock-file` overrides it per block. A client pointing a `unix://` server at the old path needs the new one.
+- **BREAKING**: the server scheme is optional now that a block knows its own protocol. `imap.server = "imap.fastmail.com"` takes `imaps://` and `smtp.server = "smtp.fastmail.com"` takes `smtps://`, a full URL still being used verbatim and a scheme the block's protocol does not speak being rejected.
 - **BREAKING**: a bare `sirup` no longer runs the wizard. It now offers to generate a configuration when it finds none, and prints the help otherwise. Run `sirup configure` to reach the wizard by name.
+- An account resolves its secrets through one memoizing resolver, so a credential command both blocks name is spawned once. Two blocks sharing a `pass` or `gpg` entry unlock the key a single time.
+- The wizard stops asking which protocol to keep when discovery returns both an IMAP and an SMTP endpoint, and generates both blocks around one set of credentials.
 - **BREAKING**: renamed `completions` and `manuals` to `completion` and `manual`, the plural staying as a hidden alias.
 - Named the three configuration failures: a missing configuration file names the path it looked for, an unknown `-a` name lists the accounts the configuration does hold, and a missing default names both ways of picking one. All three used to be a bare "Cannot find account".
 - Nothing prompts anymore when the standard input is not a terminal or `--json` is set, and the generated document goes to the standard output whenever the standard output is redirected.
@@ -22,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Fixed
 
 - Shell-expanded `socks-dir`, `sock-file` and `tls.cert` when the configuration is read. A `~` or a `$VAR` in any of them used to be taken literally, so `socks-dir = "~/run"` bound the socket under a directory named `~`.
+- Stopped the IMAP `repl` spinning on `BAD Null command` when its standard input reaches end of file. It now exits, as the SMTP one already did.
 - Paired the upstream stream's retry strategy with the proxy loop's non-blocking mode. pimalaya-stream 0.3 retries a socket reporting it is not ready, which is what an idle proxy pass looks like, so every pass would have stalled for a minute before failing.
 
 ## [0.1.0] - 2026-07-26

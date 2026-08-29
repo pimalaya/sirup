@@ -8,22 +8,35 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
-use url::Url;
+#[cfg(not(all(feature = "imap", feature = "smtp")))]
+use anyhow::bail;
+use anyhow::{Context, Result};
+
+use crate::protocol::Protocol;
 
 /// Attaches the reference client to the session socket, dispatching to
-/// the protocol submodule picked from the server URL scheme.
-pub fn start(sock_path: PathBuf, url: Url) -> Result<()> {
-    match url.scheme() {
+/// the submodule of the protocol it was asked for.
+///
+/// The socket is named on failure, an absent one usually meaning `start`
+/// is not running for that protocol rather than anything about the path.
+pub fn start(protocol: Protocol, sock_path: PathBuf) -> Result<()> {
+    let display = sock_path.display().to_string();
+
+    connect(protocol, sock_path).with_context(|| {
+        format!("Attach to the {protocol} session on {display}, is `sirup start` running?")
+    })
+}
+
+fn connect(protocol: Protocol, sock_path: PathBuf) -> Result<()> {
+    match protocol {
         #[cfg(feature = "imap")]
-        "imap" | "imaps" => imap::start(sock_path),
+        Protocol::Imap => imap::start(sock_path),
         #[cfg(not(feature = "imap"))]
-        "imap" | "imaps" => bail!("Missing cargo feature: `imap`"),
+        Protocol::Imap => bail!("Missing cargo feature: `imap`"),
         #[cfg(feature = "smtp")]
-        "smtp" | "smtps" => smtp::start(sock_path),
+        Protocol::Smtp => smtp::start(sock_path),
         #[cfg(not(feature = "smtp"))]
-        "smtp" | "smtps" => bail!("Missing cargo feature: `smtp`"),
-        s => bail!("Unknown scheme `{s}`, expects `imap(s)` or `smtp(s)`"),
+        Protocol::Smtp => bail!("Missing cargo feature: `smtp`"),
     }
 }
 
@@ -79,7 +92,9 @@ pub mod imap {
             stdout.flush()?;
 
             let mut input = String::new();
-            stdin.read_line(&mut input)?;
+            if stdin.read_line(&mut input)? == 0 {
+                break;
+            }
             let input = input.trim_end();
 
             stream.write_all(tag.inner().as_bytes())?;

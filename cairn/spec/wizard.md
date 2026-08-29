@@ -69,13 +69,21 @@ SASL passwords and tokens SHALL be prompted through the shared OS-aware picker (
 - WHEN the wizard prompts for the password
 - THEN it offers the OS keyring, a custom command, or a raw value, rather than only a raw prompt
 
-### Requirement: Tests the account before handing it back
-The wizard SHALL test the built account before handing it back, by opening and authenticating the upstream session once and then dropping it. A connection or authentication failure SHALL abort with the error instead of generating a table that cannot connect.
+### Requirement: Tests every block before handing the account back
+The wizard SHALL test each block of the built account before handing it back, by opening and authenticating that upstream session once and then dropping it. A connection or authentication failure SHALL abort with the error instead of generating a table that cannot connect.
 
 #### Scenario: Bad credential
 - GIVEN the user entered a credential the server rejects
 - WHEN the wizard tests the account
-- THEN it fails with the error and generates nothing
+- THEN it fails naming the protocol that failed and generates nothing
+
+### Requirement: Discovery keeps every endpoint it finds
+Discovery returning both an IMAP and an SMTP endpoint SHALL generate both blocks, around one set of credentials prompted once. An account speaks as many protocols as it declares, so there is nothing to choose between and no prompt asking which endpoint to throw away. An input that is a server URL names one endpoint, so it generates the one block that URL is about.
+
+#### Scenario: Both endpoints discovered
+- GIVEN a provider publishing both an IMAP and a submission endpoint
+- WHEN the wizard runs on an email address
+- THEN the generated account declares both blocks and the SASL mechanism was prompted once
 
 ### Requirement: The welcome frames the product
 The welcome a first run prints SHALL frame Sirup in a sentence, name the configuration file that is missing, say what the wizard covers and what stays hand-written, link config.sample.toml, and mention that `configure` runs the same wizard later so declining costs nothing. The `--help` footer SHALL carry the bug tracker and the sponsoring links.

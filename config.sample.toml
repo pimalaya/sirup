@@ -23,79 +23,107 @@
 # `$TMPDIR/service-sirup` when `$XDG_RUNTIME_DIR` is unset.
 #socks-dir = "/run/user/1000"
 
+# --------------------------------------------------------------------------------
+# Accounts
+# --------------------------------------------------------------------------------
+#
+# An account is a mailbox, not a session: it declares one server block per
+# protocol it speaks, exactly as himalaya and the other Pimalaya tools do.
+#
+# `sirup start` serves every block the account declares, one socket each, so a
+# single service unit covers the whole mailbox. Naming protocols narrows it:
+# `sirup start imap` serves the one block, which is what a per-protocol unit
+# wants. Every session is opened before any socket is bound, and the first one
+# to fail ends the run.
+
 [accounts.example]
 
-# Use this account when `sirup start` / `sirup repl` is run without a name.
-# Exactly one account should set it.
+# Use this account when a command runs without `-a`. Exactly one account should
+# set it.
 #default = true
 
-# Socket file for this account, defaults to
-# `<socks-dir>/sirup/<account>.sock`.
-#sock-file = "/run/user/1000/sirup/example.sock"
+# --------------------------------------------------------------------------------
+# IMAP block
+# --------------------------------------------------------------------------------
 
-# Backend server address in the form `(imap|smtp)[s]://host[:port]`. The scheme
-# picks the protocol; the `s` suffix selects implicit TLS. Unlike himalaya, the
-# scheme is mandatory: one account serves either protocol, so a bare authority
-# has no default scheme to fall back to.
-server = "imaps://example.com"
+# Server address, a bare authority or a full URL. A bare authority takes
+# `imaps://` (implicit TLS); `imap://` is cleartext with an optional STARTTLS
+# upgrade. Any other scheme is rejected.
+imap.server = "imap.example.com"
+
+# Socket this protocol is served on, defaults to
+# `<socks-dir>/sirup/<account>-imap.sock`.
+#imap.sock-file = "/run/user/1000/sirup/example-imap.sock"
 
 # TLS provider, defaults to the first available at runtime.
-#tls.provider = "rustls" | "native-tls"
+#imap.tls.provider = "rustls" | "native-tls"
 
-# Crypto provider for rustls, default to first available at runtime.
-#tls.rustls.crypto = "aws" | "ring"
+# Crypto provider for rustls, defaults to the first available at runtime.
+#imap.tls.rustls.crypto = "aws" | "ring"
 
-# Custom TLS certificate (extra root, PEM-encoded)
-#tls.cert = "/path/to/custom/cert.pem"
+# Custom TLS certificate (extra root, PEM-encoded).
+#imap.tls.cert = "/path/to/custom/cert.pem"
 
-# Enable STARTTLS (only valid when the server scheme is the non-`s` form,
-# i.e. `imap://` or `smtp://`).
-#starttls = false
+# Enable STARTTLS (only valid with the cleartext `imap://` scheme).
+#imap.starttls = false
 
 # ALPN protocol identifiers offered during the TLS handshake (rustls only;
-# native-tls ignores it). Omitting the field infers the default from the URL
-# scheme: ["imap"] for `imap[s]://`, ["smtp"] for `smtp[s]://`. An empty
-# array disables ALPN; any explicit value overrides the inferred default.
-#alpn = ["imap"]
-#alpn = []
+# native-tls ignores it). Omitting the field takes the protocol's own default,
+# ["imap"] here. An empty array disables ALPN; any explicit value overrides.
+#imap.alpn = ["imap"]
+#imap.alpn = []
 
-# --------------------------------------------------------------------------------
-# SASL config
-# --------------------------------------------------------------------------------
-
-# Pick exactly one mechanism among `anonymous`, `login`, `plain`,
-# `oauthbearer`, `xoauth2`, `scram-sha-256`. Omit the whole `sasl` table to
-# skip authentication.
-
-# SASL ANONYMOUS
-# https://datatracker.ietf.org/doc/html/rfc4505
-#sasl.anonymous.message = "any"
+# Pick exactly one SASL mechanism among `anonymous`, `login`, `plain`,
+# `oauthbearer`, `xoauth2`, `scram-sha-256`. Omit the whole `sasl` table to skip
+# authentication.
+#
+# When both blocks name the same credential command, it is spawned once for the
+# whole account, so a `pass` or `gpg` entry is unlocked once rather than twice.
 
 # SASL PLAIN
 # https://datatracker.ietf.org/doc/html/rfc4616
-#sasl.plain.authzid = "authzid"
-sasl.plain.username = "user@example.com"
-sasl.plain.password.raw = "***"
-#sasl.plain.password.command = "pass show example"
+#imap.sasl.plain.authzid = "authzid"
+imap.sasl.plain.username = "user@example.com"
+imap.sasl.plain.password.raw = "***"
+#imap.sasl.plain.password.command = "pass show example"
+
+# SASL ANONYMOUS
+# https://datatracker.ietf.org/doc/html/rfc4505
+#imap.sasl.anonymous.message = "any"
 
 # SASL LOGIN
 # https://datatracker.ietf.org/doc/html/draft-murchison-sasl-login-00
-#sasl.login.username = "user@example.com"
-#sasl.login.password.raw = "***"
+#imap.sasl.login.username = "user@example.com"
+#imap.sasl.login.password.raw = "***"
 
-# SASL OAUTHBEARER (host/port for the GS2 header are derived from the
-# session URL at connect time).
+# SASL OAUTHBEARER (host/port for the GS2 header are derived from the session
+# URL at connect time).
 # https://datatracker.ietf.org/doc/html/rfc7628
-#sasl.oauthbearer.username = "user@example.com"
-#sasl.oauthbearer.token.raw = "***"
-#sasl.oauthbearer.token.command = ["ortie", "token", "read", "example"]
+#imap.sasl.oauthbearer.username = "user@example.com"
+#imap.sasl.oauthbearer.token.raw = "***"
+#imap.sasl.oauthbearer.token.command = ["ortie", "token", "read", "example"]
 
 # SASL XOAUTH2 (Google's pre-standard OAuth 2.0 SASL).
 # https://developers.google.com/gmail/imap/xoauth2-protocol
-#sasl.xoauth2.username = "user@example.com"
-#sasl.xoauth2.token.raw = "***"
+#imap.sasl.xoauth2.username = "user@example.com"
+#imap.sasl.xoauth2.token.raw = "***"
 
-# SASL SCRAM-SHA-256 (requires `scram` cargo feature).
+# SASL SCRAM-SHA-256 (requires the `scram` cargo feature).
 # https://datatracker.ietf.org/doc/html/rfc7677
-#sasl.scram-sha-256.username = "user@example.com"
-#sasl.scram-sha-256.password.raw = "***"
+#imap.sasl.scram-sha-256.username = "user@example.com"
+#imap.sasl.scram-sha-256.password.raw = "***"
+
+# --------------------------------------------------------------------------------
+# SMTP block
+# --------------------------------------------------------------------------------
+#
+# Same fields as the IMAP block, with the SMTP schemes: a bare authority takes
+# `smtps://` and `smtp://` is cleartext with an optional STARTTLS upgrade. Omit
+# the whole block for an account serving IMAP alone.
+
+smtp.server = "smtp.example.com"
+#smtp.sock-file = "/run/user/1000/sirup/example-smtp.sock"
+#smtp.starttls = false
+#smtp.alpn = ["smtp"]
+smtp.sasl.plain.username = "user@example.com"
+smtp.sasl.plain.password.raw = "***"

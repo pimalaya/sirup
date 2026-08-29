@@ -42,6 +42,7 @@
 mod cli;
 mod config;
 mod json_schema;
+mod protocol;
 mod repl;
 mod session;
 mod wizard;

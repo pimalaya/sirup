@@ -17,7 +17,8 @@ CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix socke
 ## Features
 
 - **Pre-authenticated sessions**: connect and log in once, then expose the live IMAP or SMTP session on a Unix socket so any local client can speak the raw protocol without holding your credentials.
-- **Account discovery wizard**: `sirup configure` finds a provider's servers from an email address, a server URL or a bare domain, tests the connection, then writes the account to your configuration, appends it to the one already there, or prints it for you to place by hand.
+- **One account, every protocol it speaks**: an account declares an `imap` block, an `smtp` block or both, and `sirup start` serves each on its own socket from a single process. Name protocols to narrow it down.
+- **Account discovery wizard**: `sirup configure` finds a provider's servers from an email address, a server URL or a bare domain, tests every block it generates, then writes the account to your configuration, appends it to the one already there, or prints it for you to place by hand.
 - **SASL authentication**: anonymous, login, plain, oauthbearer, xoauth2 and scram-sha-256 (the last requires the `scram` feature).
 - **STARTTLS and implicit TLS**: pick either from the account's server scheme, with the ALPN token inferred per protocol.
 - **REPL**: a built-in reference client that forwards raw commands to the socket, for testing and as an implementation example.
@@ -117,12 +118,30 @@ Every command and subcommand is documented through --help. The common flows:
 
 ```sh
 sirup configure                # discover an account and save it
-sirup start                    # start a pre-authenticated session for the default account
+sirup start                    # serve every protocol the default account declares
+sirup start imap               # ... only its imap block
 sirup start --account work     # ... for a named account
-sirup repl                     # attach the reference client to the running session
+sirup repl imap                # attach the reference client to the imap session
 ```
 
-The start command runs as a blocking daemon, best placed in a systemd service or equivalent: it connects to the server, performs the TLS negotiation and authentication, then exposes the session on a Unix socket. Any client that can read from and write to that socket can then drive the session; the greeting is replaced by an IMAP PREAUTH line (carrying the upstream capabilities) or an SMTP 220 ready line.
+The start command runs as a blocking daemon, best placed in a systemd service or equivalent. It opens and authenticates one session per protocol the account declares, one at a time, then binds a socket for each and proxies bytes on all of them. Any client that can read from and write to a socket can drive that session; the greeting is replaced by an IMAP PREAUTH line (carrying the upstream capabilities) or an SMTP 220 ready line.
+
+Nothing is bound until every session is up, so a provider refusing one leaves no half-served daemon behind, and the first session to fail afterwards ends the whole run rather than leaving the unit looking healthy. Sockets land at `<socks-dir>/sirup/<account>-<protocol>.sock`, which is the path a client points its `unix://` server at.
+
+An account is a mailbox rather than a session, so it declares one block per protocol, the same shape himalaya and the other Pimalaya tools read:
+
+```toml
+[accounts.fastmail]
+default = true
+imap.server = "imap.fastmail.com"
+imap.sasl.plain.username = "you@fastmail.com"
+imap.sasl.plain.password.command = ["pass", "show", "fastmail"]
+smtp.server = "smtp.fastmail.com"
+smtp.sasl.plain.username = "you@fastmail.com"
+smtp.sasl.plain.password.command = ["pass", "show", "fastmail"]
+```
+
+Both blocks name one `pass` entry there, and it is read once for the whole account rather than once per block, so a locked key is unlocked a single time.
 
 Logs go to stderr; --log-level and --log-file control verbosity and destination, and --json switches supported output to machine-readable objects.
 
