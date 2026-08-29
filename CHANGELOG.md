@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added the `configure` command, which runs the account wizard on demand. It discovers a provider, tests the connection, then writes the generated `[accounts.<name>]` table to a configuration that does not exist yet, appends it as plain text to one that does, or prints it. Appending never re-serializes the document, so comments, ordering and hand-written formatting survive, and the generated account claims `default` only when no other account does.
+- Added the `json-schema` command, describing the `--json` payload of `configure`.
+- Added the `--help` footer carrying the bug tracker and the sponsoring links.
+
+### Changed
+
+- **BREAKING**: a bare `sirup` no longer runs the wizard. It now offers to generate a configuration when it finds none, and prints the help otherwise. Run `sirup configure` to reach the wizard by name.
+- **BREAKING**: renamed `completions` and `manuals` to `completion` and `manual`, the plural staying as a hidden alias.
+- Named the three configuration failures: a missing configuration file names the path it looked for, an unknown `-a` name lists the accounts the configuration does hold, and a missing default names both ways of picking one. All three used to be a bare "Cannot find account".
+- Nothing prompts anymore when the standard input is not a terminal or `--json` is set, and the generated document goes to the standard output whenever the standard output is redirected.
+
+### Fixed
+
+- Shell-expanded `socks-dir`, `sock-file` and `tls.cert` when the configuration is read. A `~` or a `$VAR` in any of them used to be taken literally, so `socks-dir = "~/run"` bound the socket under a directory named `~`.
+- Paired the upstream stream's retry strategy with the proxy loop's non-blocking mode. pimalaya-stream 0.3 retries a socket reporting it is not ready, which is what an idle proxy pass looks like, so every pass would have stalled for a minute before failing.
+
 ## [0.1.0] - 2026-07-26
 
 ### Added

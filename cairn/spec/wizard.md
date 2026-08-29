@@ -6,31 +6,60 @@ status: current
 
 # Wizard
 
-Bare `sirup` with no subcommand runs the wizard. It builds an account from a single input, then prints it as a ready-to-save config fragment on stdout. It starts no daemon and writes nothing to disk: the user redirects the output into their config file, so the config stays entirely user-owned. This mirrors himalaya and ortie. The wizard compiles only when both protocols and a TLS provider are enabled.
+The wizard generates an account, it never edits one. It builds one from a single input, tests it, and hands back a ready-to-place `[accounts.<name>]` table. What becomes of that table is its own half: a configuration file that does not exist yet is written whole, one that exists is appended to as plain text, and a declined offer prints it instead. Editing an account, adding a second one by hand and everything the questions do not cover belong to the file and the user's editor, against config.sample.toml. The discovery probes compile only when both protocols and a TLS provider are enabled; the command exists whatever the feature set and says what is missing when it cannot run.
 
-### Requirement: Runs on bare invocation
-Bare `sirup` with no subcommand SHALL run the wizard.
+### Requirement: Reachable by name
+`sirup configure` SHALL run the wizard on demand, and is the only entry point skipping the welcome, having been asked for by name.
 
-#### Scenario: No subcommand
-- GIVEN `sirup` is invoked with no subcommand
-- WHEN it starts
-- THEN the wizard runs
+#### Scenario: Configure command
+- GIVEN a configuration that already exists
+- WHEN `sirup configure` runs
+- THEN the wizard runs with no welcome, and offers to append the account it generates
 
-### Requirement: Prints an account fragment to stdout
-The wizard SHALL print the built account as a `[accounts.<name>]` TOML fragment on stdout, with guidance embedded as comments, and the same data serialized as an object under `--json`. Prompts SHALL render on stderr so a redirect appends only the fragment. The account name SHALL be derived from the input as the table key. The wizard SHALL start no daemon.
+### Requirement: A bare invocation offers, then falls back to the help
+A bare `sirup` SHALL offer the wizard when it finds no configuration, and print the help otherwise. A bare invocation has nothing to carry on to, so a declined offer falls back to the help. A configuration that fails to parse counts as a configuration, so the offer never writes over one, and `--account` alone is a half-typed command rather than a first run.
 
-#### Scenario: Fragment is appendable
-- GIVEN the wizard has built an account from user input
-- WHEN it finishes
-- THEN a `[accounts.<name>]` fragment is printed on stdout while prompts stayed on stderr, so `sirup >> <config>` appends it
+#### Scenario: First run
+- GIVEN no configuration file on disk and a terminal on the standard input
+- WHEN `sirup` runs with no subcommand
+- THEN the welcome is printed and the wizard is offered, and declining prints the help
 
-### Requirement: Account is left non-default
-The wizard SHALL build the account with `default = false`, so it does not hijack the default when merged into a config that already has one. Being false, `default` SHALL be omitted from the printed fragment; the user opts in by adding `default = true`.
+### Requirement: The name is derived, and taken until free
+The account name SHALL be derived from the input rather than prompted, being only the table key, and SHALL be suffixed until the configuration does not hold it already. A second `[accounts.<name>]` table of one name makes the whole document fail to parse, taking the accounts that used to work down with it.
 
-#### Scenario: Fragment omits default
-- GIVEN the wizard has built an account
-- WHEN it prints the fragment
-- THEN no `default` key appears, and the user adds `default = true` to select it
+#### Scenario: Name already taken
+- GIVEN a configuration holding `example` and `example-2`
+- WHEN the wizard derives `example` from the input
+- THEN the generated table is `[accounts.example-3]`
+
+### Requirement: The default is claimed only when free
+The generated account SHALL claim `default` only when no other account does. Two defaults resolve to whichever one the account map yields first.
+
+#### Scenario: An account already holds the default
+- GIVEN a configuration whose `work` account sets `default = true`
+- WHEN the wizard generates a second account
+- THEN that account leaves `default` unset, and the report names the `-a` flag reaching it
+
+### Requirement: Saving never rewrites what a human wrote
+A configuration file that does not exist yet SHALL be written whole. One that exists SHALL be appended to as plain text, never parsed and re-serialized, so its comments, its ordering and its formatting survive.
+
+#### Scenario: Appending to a hand-written configuration
+- GIVEN a configuration opening with a comment and holding one account
+- WHEN the wizard appends a second account
+- THEN the comment, the ordering and the formatting are untouched, and both accounts parse back
+
+### Requirement: Interactivity is decided by the streams
+Nothing SHALL prompt when the standard input is not a terminal or when `--json` is set: both get the error that names the way out. The generated document SHALL go to the standard output whenever the standard output is redirected, and every prompt, banner and confirmation SHALL render on the standard error so it never pollutes that document.
+
+#### Scenario: Redirected wizard
+- GIVEN a terminal on the standard input and a redirected standard output
+- WHEN `sirup configure > config.toml` runs
+- THEN the prompts render on the standard error, the document lands in the file, and nothing else is written to disk
+
+#### Scenario: Cron job
+- GIVEN the standard input is a pipe
+- WHEN `sirup configure` runs
+- THEN it fails naming the documented sample, rather than waiting on a prompt nothing will answer
 
 ### Requirement: Secrets use the shared picker
 SASL passwords and tokens SHALL be prompted through the shared OS-aware picker (OS keyring, a custom command, or a raw value), never a bare raw-only prompt. Passwords SHALL use the keyring picker and OAuth tokens the token picker with the OAuth brokers enabled. The account name SHALL seed the keyring entry.
@@ -40,18 +69,18 @@ SASL passwords and tokens SHALL be prompted through the shared OS-aware picker (
 - WHEN the wizard prompts for the password
 - THEN it offers the OS keyring, a custom command, or a raw value, rather than only a raw prompt
 
-### Requirement: Tests the account before printing
-The wizard SHALL test the built account before printing it, by opening and authenticating the upstream session once and then dropping it. A connection or authentication failure SHALL abort with the error instead of printing an unusable fragment.
+### Requirement: Tests the account before handing it back
+The wizard SHALL test the built account before handing it back, by opening and authenticating the upstream session once and then dropping it. A connection or authentication failure SHALL abort with the error instead of generating a table that cannot connect.
 
 #### Scenario: Bad credential
 - GIVEN the user entered a credential the server rejects
 - WHEN the wizard tests the account
-- THEN it fails with the error and prints no fragment
+- THEN it fails with the error and generates nothing
 
-### Requirement: Never write to disk
-The wizard SHALL build the account in memory and print it as a config fragment on stdout only. It SHALL NOT write credentials or configuration to disk.
+### Requirement: The welcome frames the product
+The welcome a first run prints SHALL frame Sirup in a sentence, name the configuration file that is missing, say what the wizard covers and what stays hand-written, link config.sample.toml, and mention that `configure` runs the same wizard later so declining costs nothing. The `--help` footer SHALL carry the bug tracker and the sponsoring links.
 
-#### Scenario: Wizard run
-- GIVEN a fresh run
-- WHEN the wizard builds an account from user input
-- THEN the account is printed on stdout and nothing is written to disk
+#### Scenario: Welcome before the offer
+- GIVEN a first run raising the offer
+- WHEN the welcome is printed
+- THEN it names the missing path and the sample, and says `sirup configure` runs the wizard again later

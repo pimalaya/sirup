@@ -9,6 +9,13 @@
 # Override with `sirup -c <PATH>` or `SIRUP_CONFIG=<PATH>`. Multiple paths can be
 # passed at once, separated by `:`; the first one is the base and the rest are
 # deep-merged on top of it.
+#
+# `sirup configure` generates an account from a single email address, server URL
+# or domain, and appends it here without touching what you wrote. Every field
+# below is yours to edit by hand.
+#
+# Every path field is shell-expanded when the file is read, so `~` and `$VAR`
+# work anywhere one is expected.
 # ================================================================================
 
 # Directory containing all per-account Unix sockets. Defaults to

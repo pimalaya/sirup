@@ -10,15 +10,15 @@
 //!    ask which one to start.
 //! 4. Prompt the SASL mechanism plus only the fields it needs; secrets
 //!    go through the shared keyring/command/raw picker.
-//! 5. Test the account by connecting once, then print it as a
-//!    ready-to-save config fragment on stdout; nothing is persisted.
+//! 5. Test the account by connecting once, then hand it back with the
+//!    name it suggests. What becomes of it belongs to
+//!    [`crate::wizard::configure`].
 
-use std::{collections::BTreeMap, env, fmt};
+use std::env;
 
 use anyhow::{Result, bail};
 use io_pim_discovery::shared::dns::system_resolver;
 use pimalaya_cli::{
-    printer::Printer,
     prompt,
     spinner::Spinner,
     wizard::{
@@ -26,9 +26,7 @@ use pimalaya_cli::{
         smtp::{Encryption as SmtpEncryption, WizardSmtpConfig},
     },
 };
-use pimalaya_config::toml as config_toml;
 use pimalaya_stream::tls::Tls;
-use serde::Serialize;
 use url::Url;
 
 use crate::{
@@ -36,6 +34,7 @@ use crate::{
         AccountConfig, SaslAnonymousConfig, SaslConfig, SaslLoginConfig, SaslOauthbearerConfig,
         SaslPlainConfig, SaslScramSha256Config, SaslXoauth2Config, TlsConfig,
     },
+    session,
     wizard::{autoconfig, pacc, secret, srv},
 };
 
@@ -49,10 +48,10 @@ const DEFAULT_RESOLVER: &str = "tcp://1.1.1.1:53";
 /// avoids leaking the queried domain to a third-party resolver and
 /// works around networks that block the default.
 pub fn discovery_resolver() -> Url {
-    if let Ok(resolver) = env::var("SIRUP_DNS_RESOLVER") {
-        if let Ok(url) = resolver.parse() {
-            return url;
-        }
+    if let Ok(resolver) = env::var("SIRUP_DNS_RESOLVER")
+        && let Ok(url) = resolver.parse()
+    {
+        return url;
     }
 
     if let Some(url) = system_resolver() {
@@ -89,12 +88,12 @@ impl DiscoveryResult {
 }
 
 /// Prompts once for an email address, a server URL or a bare domain,
-/// builds the account from it, then prints it as a ready-to-save config
-/// fragment on stdout. Run on bare `sirup`. Writes nothing to disk: the
-/// user redirects the output into their config (e.g.
-/// `sirup >> <config>`), so prompts render on stderr and only the
-/// fragment lands on stdout.
-pub fn run(printer: &mut impl Printer) -> Result<()> {
+/// builds the account from it and tests it, then hands it back beside
+/// the name it suggests.
+///
+/// Every prompt renders on stderr, so a redirected stdout carries the
+/// generated document alone.
+pub fn run() -> Result<(String, AccountConfig)> {
     let input = prompt::text::<&str>("Email, server or URL:", None)?;
     let input = input.trim();
     if input.is_empty() {
@@ -107,17 +106,18 @@ pub fn run(printer: &mut impl Printer) -> Result<()> {
     let name = default_account_name(input);
     let account = build_account(input, &name)?;
 
-    // NOTE: test the account before printing it, exactly like himalaya, so
-    // a bad credential or endpoint fails here and stops the process rather
-    // than emitting a config that cannot connect.
+    // NOTE: test the account before handing it back, exactly like
+    // himalaya, so a bad credential or endpoint fails here rather than
+    // landing in a configuration that cannot connect.
+    let (server, tls, starttls, sasl) = account.resolve_connection()?;
     let spinner = Spinner::start("Testing account configuration");
-    if let Err(err) = crate::test_account(&account) {
+    if let Err(err) = session::test(server, tls, starttls, sasl) {
         spinner.failure("Account configuration test failed");
         return Err(err);
     }
     spinner.success("Account configuration is valid");
 
-    printer.out(GeneratedConfig::new(name, account))
+    Ok((name, account))
 }
 
 /// Derives the `[accounts.<name>]` table key suggested for `input`: the
@@ -125,16 +125,16 @@ pub fn run(printer: &mut impl Printer) -> Result<()> {
 /// domain. Only a suggestion, the user renames it in the printed
 /// fragment.
 fn default_account_name(input: &str) -> String {
-    if let Some((_, domain)) = input.rsplit_once('@') {
-        if !input.contains("://") {
-            return first_label(domain);
-        }
+    if let Some((_, domain)) = input.rsplit_once('@')
+        && !input.contains("://")
+    {
+        return first_label(domain);
     }
 
-    if let Ok(url) = Url::parse(input) {
-        if let Some(host) = url.host_str() {
-            return first_label(host);
-        }
+    if let Ok(url) = Url::parse(input)
+        && let Some(host) = url.host_str()
+    {
+        return first_label(host);
     }
 
     first_label(input)
@@ -204,11 +204,9 @@ fn build_url_account(url: Url, account_name: &str) -> Result<AccountConfig> {
             let starttls = matches!(scheme.as_str(), "imap" | "smtp");
             let sasl = prompt_sasl(account_name, None)?;
             Ok(AccountConfig {
-                // NOTE: left non-default like himalaya, so it does not
-                // hijack the default when merged into a config that
-                // already has one. Being false, `default` is omitted from
-                // the printed fragment; the user marks their choice with
-                // `default = true`.
+                // NOTE: claiming the default is a property of the
+                // whole accounts table, so it is decided when the
+                // account is saved, not when it is built.
                 default: false,
                 sock_file: None,
                 server: url.to_string(),
@@ -290,13 +288,12 @@ fn discover(local_part: Option<&str>, domain: &str) -> DiscoveryResult {
         return result;
     }
 
-    if let Some(local) = local_part {
-        if let Some(result) = autoconfig::run_isp(local, domain)
+    if let Some(local) = local_part
+        && let Some(result) = autoconfig::run_isp(local, domain)
             .map(|c| autoconfig::defaults(&c))
             .filter(|r| !r.is_empty())
-        {
-            return result;
-        }
+    {
+        return result;
     }
 
     if let Some(result) = autoconfig::run_isp_fallback(domain)
@@ -377,8 +374,6 @@ fn build_imap_account(endpoint: WizardImapConfig, sasl: SaslConfig) -> AccountCo
     let server = format!("{scheme}://{}:{}", endpoint.host, endpoint.port);
 
     AccountConfig {
-        // NOTE: left non-default like himalaya (see build_url_account), so
-        // it is omitted from the fragment while false.
         default: false,
         sock_file: None,
         server,
@@ -397,8 +392,6 @@ fn build_smtp_account(endpoint: WizardSmtpConfig, sasl: SaslConfig) -> AccountCo
     let server = format!("{scheme}://{}:{}", endpoint.host, endpoint.port);
 
     AccountConfig {
-        // NOTE: left non-default like himalaya (see build_url_account), so
-        // it is omitted from the fragment while false.
         default: false,
         sock_file: None,
         server,
@@ -406,97 +399,5 @@ fn build_smtp_account(endpoint: WizardSmtpConfig, sasl: SaslConfig) -> AccountCo
         alpn: None,
         starttls,
         sasl: Some(sasl),
-    }
-}
-
-/// The account produced by the wizard, printed as a ready-to-save
-/// `[accounts.<name>]` fragment on stdout with its guidance embedded as
-/// comments, or the same data serialized as an object in JSON mode. The
-/// wizard writes nothing itself: the user redirects the output into
-/// their config file (e.g. `sirup >> <config>`), so prompts go to
-/// stderr and only this lands on stdout.
-#[derive(Serialize)]
-struct GeneratedConfig {
-    accounts: BTreeMap<String, AccountConfig>,
-}
-
-impl GeneratedConfig {
-    /// Wraps a single wizard-built account under its table key.
-    fn new(name: String, account: AccountConfig) -> Self {
-        Self {
-            accounts: BTreeMap::from([(name, account)]),
-        }
-    }
-}
-
-impl fmt::Display for GeneratedConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let toml = config_toml::to_string(self).map_err(|_| fmt::Error)?;
-
-        writeln!(f, "# Account generated by the sirup wizard.")?;
-        writeln!(f, "#")?;
-        writeln!(f, "# Nothing was written to disk: save this into your")?;
-        writeln!(f, "# config file, one of:")?;
-        writeln!(f, "#   $XDG_CONFIG_HOME/sirup/config.toml")?;
-        writeln!(f, "#   $HOME/.config/sirup/config.toml")?;
-        writeln!(f, "#   $HOME/.siruprc")?;
-        writeln!(f, "#")?;
-        writeln!(
-            f,
-            "# Prompts render on stderr, so redirecting works directly:"
-        )?;
-        writeln!(f, "#   sirup >> ~/.config/sirup/config.toml")?;
-        writeln!(f, "#")?;
-        writeln!(
-            f,
-            "# The account name (the [accounts.*] table key) is derived"
-        )?;
-        writeln!(f, "# from your input; rename it to anything you like.")?;
-        writeln!(f, "#")?;
-        writeln!(f, "# Every field is documented in the sample config:")?;
-        writeln!(
-            f,
-            "# https://github.com/pimalaya/sirup/blob/master/config.sample.toml"
-        )?;
-        writeln!(f)?;
-        write!(f, "{toml}")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use pimalaya_config::secret::Secret;
-    use secrecy::SecretString;
-
-    use super::*;
-    use crate::config::{SaslConfig, SaslPlainConfig, TlsConfig};
-
-    #[test]
-    fn generated_config_renders_account_fragment() {
-        let account = AccountConfig {
-            default: false,
-            sock_file: None,
-            server: "imaps://mail.example.com:993".into(),
-            tls: TlsConfig::default(),
-            alpn: None,
-            starttls: false,
-            sasl: Some(SaslConfig::Plain(SaslPlainConfig {
-                authzid: None,
-                authcid: "alice@example.com".into(),
-                passwd: Secret::Raw(SecretString::from("s3cret")),
-            })),
-        };
-
-        let rendered = GeneratedConfig::new("example".into(), account).to_string();
-
-        assert!(rendered.contains("[accounts.example]"));
-        assert!(rendered.contains("server = \"imaps://mail.example.com:993\""));
-        assert!(rendered.contains("sasl.plain.authcid = \"alice@example.com\""));
-        assert!(rendered.contains("sasl.plain.passwd.raw = \"s3cret\""));
-        // NOTE: a non-default account, a false switch and a default TLS
-        // block are all omitted from the fragment (himalaya-style).
-        assert!(!rendered.contains("default"));
-        assert!(!rendered.contains("starttls"));
-        assert!(!rendered.contains("provider"));
     }
 }

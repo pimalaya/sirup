@@ -4,23 +4,35 @@
 //! of named [`AccountConfig`] entries, each carrying a server URL, a TLS
 //! profile, a STARTTLS switch, an optional ALPN override and a single
 //! SASL mechanism. The types derive both `Deserialize` (loading a config)
-//! and `Serialize` (the wizard printing a ready-to-save fragment), so the
+//! and `Serialize` (the wizard rendering a ready-to-save fragment), so the
 //! `skip_serializing_if` predicates keep defaulted fields out of that
 //! fragment. [`parse_server`] validates a server URL into its protocol.
+//!
+//! Every path field is shell-expanded as it is deserialized, so no call
+//! site can read one as written and no new field can forget to expand.
 
 use std::{collections::HashMap, env::temp_dir, fs, path::PathBuf};
 
 use anyhow::{Result, bail};
-use log::warn;
-use pimalaya_config::{secret::Secret, toml::TomlConfig};
-use pimalaya_stream::{
-    sasl::{
-        Sasl, SaslAnonymous, SaslLogin, SaslOauthbearer, SaslPlain, SaslScramSha256, SaslXoauth2,
-    },
-    tls::{Rustls, RustlsCrypto, Tls, TlsProvider},
+use io_sasl::{
+    login::SaslLoginCreds, mechanism::Sasl, rfc4505::anonymous::SaslAnonymousCreds,
+    rfc4616::plain::SaslPlainCreds, rfc5801::SaslGs2ChannelBinding, rfc5802::SaslScramCreds,
+    rfc7628::oauthbearer::SaslOauthbearerCreds, xoauth2::SaslXoauth2Creds,
 };
-use serde::{Deserialize, Serialize};
+use log::warn;
+use pimalaya_config::{
+    secret::Secret,
+    toml::{TomlConfig, shell_expanded_path},
+};
+use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider};
+use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
+
+/// The documented sample every field is described in, named by the
+/// welcome and by each configuration failure as the way out that needs
+/// no wizard.
+pub const CONFIG_SAMPLE_URL: &str =
+    "https://github.com/pimalaya/sirup/blob/master/config.sample.toml";
 
 /// The whole TOML configuration file.
 #[derive(Clone, Debug, Deserialize)]
@@ -28,7 +40,10 @@ use url::Url;
 pub struct Config {
     /// Directory holding every per-account Unix socket. Defaults to the
     /// runtime dir, falling back to a temp dir when none is found.
-    #[serde(default = "default_socks_dir")]
+    #[serde(
+        default = "default_socks_dir",
+        deserialize_with = "shell_expanded_path"
+    )]
     pub socks_dir: PathBuf,
     /// The accounts, keyed by the name heading their `[accounts.<name>]`
     /// table.
@@ -74,6 +89,7 @@ pub struct AccountConfig {
     pub default: bool,
     /// Override for this account's socket path, replacing the
     /// `<socks_dir>/sirup/<name>.sock` default.
+    #[serde(default, deserialize_with = "opt_shell_expanded_path")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sock_file: Option<PathBuf>,
     /// Backend server address as a full `imap://`, `imaps://`,
@@ -106,11 +122,127 @@ pub struct AccountConfig {
     pub sasl: Option<SaslConfig>,
 }
 
+impl AccountConfig {
+    /// Resolves the runtime connection parameters: the server URL, the
+    /// TLS handle, the STARTTLS switch and the SASL credentials.
+    ///
+    /// A missing ALPN and a portless URL both infer from the server
+    /// scheme.
+    pub fn resolve_connection(&self) -> Result<(Url, Tls, bool, Option<Sasl>)> {
+        let server = parse_server(&self.server)?;
+        let scheme = server.scheme();
+
+        // NOTE: a missing alpn infers from the server scheme (["imap"]
+        // for imap[s]://, ["smtp"] for smtp[s]://); an explicit empty vec
+        // disables ALPN, a non-empty one overrides the default.
+        let alpn = self.alpn.clone().unwrap_or_else(|| default_alpn(scheme));
+        let tls = self.tls.clone().into_tls(alpn);
+
+        // NOTE: the url crate only knows default ports for web schemes,
+        // so imap(s)/smtp(s) need an explicit fallback. Gating the SASL
+        // config on port_or_known_default() would silently drop it for a
+        // portless URL like `imaps://mail.example.com`, opening an
+        // unauthenticated session. Host and port only feed OAUTHBEARER;
+        // the other mechanisms ignore them.
+        let sasl = self
+            .sasl
+            .clone()
+            .map(|cfg| {
+                let host = server.host_str().unwrap_or_default();
+                let port = server.port().unwrap_or_else(|| default_port(scheme));
+                cfg.try_into_sasl(host, port)
+            })
+            .transpose()?;
+
+        Ok((server, tls, self.starttls, sasl))
+    }
+
+    /// Renders the account as an `[accounts.<name>]` TOML table, the
+    /// document the wizard saves, appends or prints.
+    ///
+    /// Borrowed rather than moved into a [`Config`], which would mean
+    /// cloning the account to render it, and the endpoint is lifted to
+    /// the top of the table: serialized alphabetically it would sit
+    /// under the credentials that qualify it.
+    pub fn render(&self, name: &str) -> Result<String> {
+        #[derive(Serialize)]
+        struct AccountDocument<'a> {
+            accounts: HashMap<&'a str, &'a AccountConfig>,
+        }
+
+        let document = AccountDocument {
+            accounts: HashMap::from([(name, self)]),
+        };
+        let rendered = pimalaya_config::toml::to_string(&document)?;
+
+        let Some((header, body)) = rendered.split_once('\n') else {
+            return Ok(rendered);
+        };
+
+        let mut lines: Vec<&str> = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        lines.sort_by_key(|line| !line.starts_with("server "));
+
+        let mut document = format!("{header}\n");
+
+        for line in lines {
+            document.push_str(line);
+            document.push('\n');
+        }
+
+        Ok(document)
+    }
+}
+
 /// `skip_serializing_if` predicate for a `bool` field: skips it when
 /// `false`, so a wizard-generated fragment omits the off switches. The
 /// wizard is the only serializer of these types.
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+// NOTE: these mirror io-imap's and io-smtp's own `default_alpn()` and
+// `default_port()`, kept local so the schema depends on no backend crate
+// and resolves the same under any feature subset.
+
+/// Default ALPN identifiers for a server scheme: `["imap"]` for
+/// `imap[s]://` <sup>[rfc7595]</sup>, `["smtp"]` for `smtp[s]://`.
+///
+/// [rfc7595]: https://www.iana.org/go/rfc7595
+fn default_alpn(scheme: &str) -> Vec<String> {
+    match scheme {
+        "imap" | "imaps" => vec![String::from("imap")],
+        "smtp" | "smtps" => vec![String::from("smtp")],
+        _ => Vec::new(),
+    }
+}
+
+/// Default port for a server scheme: 143 and 993 for IMAP
+/// <sup>[rfc3501]</sup>, 25 and 465 for SMTP <sup>[rfc5321]</sup>.
+///
+/// [rfc3501]: https://www.iana.org/go/rfc3501
+/// [rfc5321]: https://www.iana.org/go/rfc5321
+fn default_port(scheme: &str) -> u16 {
+    match scheme {
+        "imap" => 143,
+        "imaps" => 993,
+        "smtp" => 25,
+        "smtps" => 465,
+        _ => 0,
+    }
+}
+
+/// Deserializes an optional path field, expanding it exactly as
+/// [`shell_expanded_path`] expands a required one.
+///
+/// pimalaya-config carries no optional twin yet, so the wrapper lives
+/// here until it does.
+fn opt_shell_expanded_path<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<PathBuf>, D::Error> {
+    shell_expanded_path(deserializer).map(Some)
 }
 
 /// `skip_serializing_if` predicate for the [`TlsConfig`] field: skips it
@@ -153,6 +285,7 @@ pub struct TlsConfig {
     #[serde(default)]
     pub rustls: RustlsConfig,
     /// Extra root certificate to trust, PEM-encoded.
+    #[serde(default, deserialize_with = "opt_shell_expanded_path")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cert: Option<PathBuf>,
 }
@@ -214,7 +347,7 @@ impl TlsConfig {
 ///
 /// Exactly one mechanism is selected per account; each variant carries
 /// the credentials for that mechanism. Maps 1:1 to the variants of
-/// [`pimalaya_stream::sasl::Sasl`].
+/// [`io_sasl::mechanism::Sasl`].
 ///
 /// `scram-sha-256` only works at runtime when the `scram` cargo feature
 /// is enabled (it propagates to `io-imap`/`io-smtp`); otherwise the
@@ -306,29 +439,34 @@ impl SaslConfig {
     /// header; the other mechanisms ignore them.
     pub fn try_into_sasl(self, host: impl ToString, port: u16) -> Result<Sasl> {
         Ok(match self {
-            SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymous { message: c.message }),
-            SaslConfig::Login(c) => Sasl::Login(SaslLogin {
+            SaslConfig::Anonymous(c) => Sasl::Anonymous(SaslAnonymousCreds { message: c.message }),
+            SaslConfig::Login(c) => Sasl::Login(SaslLoginCreds {
                 username: c.username,
                 password: c.password.get()?,
             }),
-            SaslConfig::Plain(c) => Sasl::Plain(SaslPlain {
+            SaslConfig::Plain(c) => Sasl::Plain(SaslPlainCreds {
                 authzid: c.authzid,
                 authcid: c.authcid,
                 passwd: c.passwd.get()?,
             }),
-            SaslConfig::Oauthbearer(c) => Sasl::Oauthbearer(SaslOauthbearer {
+            SaslConfig::Oauthbearer(c) => Sasl::Oauthbearer(SaslOauthbearerCreds {
                 username: c.username,
                 host: host.to_string(),
                 port,
                 token: c.token.get()?,
             }),
-            SaslConfig::Xoauth2(c) => Sasl::Xoauth2(SaslXoauth2 {
+            SaslConfig::Xoauth2(c) => Sasl::Xoauth2(SaslXoauth2Creds {
                 username: c.username,
                 token: c.token.get()?,
             }),
-            SaslConfig::ScramSha256(c) => Sasl::ScramSha256(SaslScramSha256 {
+            // NOTE: an empty nonce means draw one for me: the client
+            // fills it in, an I/O-free coroutine having no randomness of
+            // its own.
+            SaslConfig::ScramSha256(c) => Sasl::ScramSha256(SaslScramCreds {
                 username: c.username,
                 password: c.password.get()?,
+                nonce: Vec::new(),
+                channel_binding: SaslGs2ChannelBinding::Unsupported,
             }),
         })
     }
@@ -349,4 +487,58 @@ fn default_socks_dir() -> PathBuf {
     }
 
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+
+    use super::*;
+
+    /// A configuration naming every path field it has, each written with
+    /// a leading tilde.
+    fn config() -> Config {
+        toml::from_str(
+            r#"
+socks-dir = "~/run"
+
+[accounts.work]
+server = "imaps://mail.example.com"
+sock-file = "~/run/work.sock"
+tls.cert = "~/certs/ca.pem"
+"#,
+        )
+        .expect("parse the config")
+    }
+
+    #[test]
+    fn every_path_is_expanded_at_deserialize() {
+        let home = env::var("HOME").expect("HOME must be set");
+        let config = config();
+        let account = &config.accounts["work"];
+
+        assert_eq!(config.socks_dir, PathBuf::from(format!("{home}/run")));
+        assert_eq!(
+            account.sock_file,
+            Some(PathBuf::from(format!("{home}/run/work.sock")))
+        );
+        assert_eq!(
+            account.tls.cert,
+            Some(PathBuf::from(format!("{home}/certs/ca.pem")))
+        );
+    }
+
+    #[test]
+    fn a_portless_url_infers_its_alpn_and_port() {
+        let account = &config().accounts["work"];
+        let (server, tls, starttls, sasl) = account
+            .resolve_connection()
+            .expect("resolve the connection");
+
+        assert_eq!(server.port(), None);
+        assert_eq!(default_port(server.scheme()), 993);
+        assert_eq!(tls.rustls.alpn, ["imap"]);
+        assert!(!starttls);
+        assert!(sasl.is_none());
+    }
 }

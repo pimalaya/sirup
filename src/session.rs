@@ -14,6 +14,7 @@ use std::net::Ipv4Addr;
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::{
+    any::Any,
     fs,
     io::{self, Read, Write},
     net::Shutdown,
@@ -29,23 +30,27 @@ use std::{
 use anyhow::{Result, bail};
 #[cfg(feature = "imap")]
 use io_imap::{
-    client::ImapClientStd,
+    client::{ImapClient, ImapClientStd},
     codec::{
         GreetingCodec,
         encode::{Encoder, Fragment},
     },
+    session::ImapSessionOpenOptions,
     types::{
         core::Vec1,
         response::{Capability, Code, Greeting},
     },
 };
+use io_sasl::mechanism::Sasl;
 #[cfg(feature = "smtp")]
-use io_smtp::{client::SmtpClientStd, rfc5321::SmtpEhloDomain};
+use io_smtp::{
+    client::{SmtpClient, SmtpClientStd},
+    rfc5321::SmtpEhloDomain,
+    session::SmtpSessionOpenOptions,
+};
 use log::{info, warn};
 use pimalaya_cli::spinner::Spinner;
-#[cfg(any(feature = "imap", feature = "smtp"))]
-use pimalaya_stream::std::stream::StreamStd;
-use pimalaya_stream::{sasl::Sasl, tls::Tls};
+use pimalaya_stream::{retry::Retry, stream::Stream, tls::Tls};
 #[cfg(windows)]
 use uds_windows::{UnixListener, UnixStream};
 use url::Url;
@@ -74,54 +79,58 @@ pub enum Session {
 }
 
 impl Session {
-    /// Sets the read timeout on the underlying authenticated stream.
+    /// The concrete stream under the protocol client.
     ///
-    /// Both protocol clients box the stream as `Box<dyn ImapStream>` /
-    /// `Box<dyn SmtpStream>`; we downcast back to [`StreamStd`] (the
-    /// only concrete type Sirup ever stores) to reach the inherent
-    /// [`StreamStd::set_read_timeout`] method.
-    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
-        let stream: &mut StreamStd = match self {
+    /// Both clients box it as `Box<dyn ImapStream>` / `Box<dyn
+    /// SmtpStream>` to stay transport-agnostic. Sirup opens every stream
+    /// through pimalaya-stream, so the concrete type is always [`Stream`]
+    /// and the downcast is infallible by construction.
+    fn stream(&mut self) -> Option<&mut Stream> {
+        let stream: &mut dyn Any = match self {
             #[cfg(feature = "imap")]
-            Self::Imap { client, .. } => client
-                .stream
-                .as_any_mut()
-                .downcast_mut::<StreamStd>()
-                .expect("Sirup IMAP stream is always StreamStd"),
+            Self::Imap { client, .. } => client.stream.as_any_mut(),
             #[cfg(feature = "smtp")]
-            Self::Smtp(client) => client
-                .stream
-                .as_any_mut()
-                .downcast_mut::<StreamStd>()
-                .expect("Sirup SMTP stream is always StreamStd"),
+            Self::Smtp(client) => client.stream.as_any_mut(),
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
-            Self::Invalid => return Ok(()),
+            Self::Invalid => return None,
         };
-        stream.set_read_timeout(timeout)
+
+        let stream = stream
+            .downcast_mut::<Stream>()
+            .expect("Sirup stream is always a pimalaya-stream Stream");
+
+        Some(stream)
+    }
+
+    /// Sets the read timeout on the underlying authenticated stream.
+    pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        match self.stream() {
+            Some(stream) => stream.set_read_timeout(timeout),
+            None => Ok(()),
+        }
     }
 
     /// Toggles non-blocking mode on the underlying authenticated stream,
-    /// reaching it through the same [`StreamStd`] downcast as
-    /// [`Self::set_read_timeout`].
+    /// and the retry strategy along with it.
+    ///
+    /// The two are contradictory. A stream retries what a socket reports
+    /// as not ready, for a minute by default, while non-blocking mode
+    /// exists precisely to surface those failures: the proxy loop reads
+    /// one as "nothing to relay this pass". Going back to blocking
+    /// restores the default, the keepalive NOOP wanting a stalled read
+    /// retried rather than handed back.
     pub fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
-        let stream: &mut StreamStd = match self {
-            #[cfg(feature = "imap")]
-            Self::Imap { client, .. } => client
-                .stream
-                .as_any_mut()
-                .downcast_mut::<StreamStd>()
-                .expect("Sirup IMAP stream is always StreamStd"),
-            #[cfg(feature = "smtp")]
-            Self::Smtp(client) => client
-                .stream
-                .as_any_mut()
-                .downcast_mut::<StreamStd>()
-                .expect("Sirup SMTP stream is always StreamStd"),
-            #[cfg(not(feature = "imap"))]
-            #[cfg(not(feature = "smtp"))]
-            Self::Invalid => return Ok(()),
+        let Some(stream) = self.stream() else {
+            return Ok(());
         };
+
+        stream.retry = if nonblocking {
+            Retry::Never
+        } else {
+            Retry::default()
+        };
+
         stream.set_nonblocking(nonblocking)
     }
 
@@ -191,7 +200,11 @@ fn connect(url: Url, tls: Tls, starttls: bool, sasl: Option<Sasl>) -> Result<Ses
             feature = "native-tls"
         ))]
         "imap" | "imaps" => {
-            let (client, capability) = ImapClientStd::connect(&url, &tls, starttls, sasl, None)?;
+            let opts = ImapSessionOpenOptions {
+                starttls,
+                ..Default::default()
+            };
+            let (client, capability) = ImapClientStd::connect(&url, &tls, sasl, opts)?;
             Session::Imap { client, capability }
         }
         #[cfg(feature = "smtp")]
@@ -202,7 +215,9 @@ fn connect(url: Url, tls: Tls, starttls: bool, sasl: Option<Sasl>) -> Result<Ses
         ))]
         "smtp" | "smtps" => {
             let domain: SmtpEhloDomain<'static> = Ipv4Addr::new(127, 0, 0, 1).into();
-            Session::Smtp(SmtpClientStd::connect(&url, &tls, starttls, domain, sasl)?)
+            let opts = SmtpSessionOpenOptions { starttls };
+            let (client, _capabilities) = SmtpClientStd::connect(&url, &tls, domain, sasl, opts)?;
+            Session::Smtp(client)
         }
 
         #[cfg(not(feature = "imap"))]
@@ -222,13 +237,8 @@ fn connect(url: Url, tls: Tls, starttls: bool, sasl: Option<Sasl>) -> Result<Ses
 
 /// Connects and authenticates once, then drops the session without
 /// binding any socket. Used by the wizard to validate a freshly-built
-/// account before printing it.
-#[cfg(all(feature = "imap", feature = "smtp"))]
-#[cfg(any(
-    feature = "rustls-ring",
-    feature = "rustls-aws",
-    feature = "native-tls"
-))]
+/// account before handing it back.
+#[cfg(discovery)]
 pub fn test(url: Url, tls: Tls, starttls: bool, sasl: Option<Sasl>) -> Result<()> {
     let _ = connect(url, tls, starttls, sasl)?;
     Ok(())
