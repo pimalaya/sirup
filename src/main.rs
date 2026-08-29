@@ -1,10 +1,11 @@
 //! # Sirup
 //!
-//! Sirup spawns a pre-authenticated IMAP or SMTP session and exposes it
-//! on a Unix socket, so any local client can speak the raw protocol
-//! without holding credentials or repeating the login and TLS
-//! handshake. It runs as a small blocking daemon, one instance per
-//! account, best placed behind a systemd service or equivalent.
+//! Sirup spawns a pre-authenticated IMAP, SMTP or ManageSieve session
+//! and exposes it on a Unix socket, so any local client can speak the
+//! raw protocol without holding credentials or repeating the login and
+//! TLS handshake. It runs as a small blocking daemon, one instance per
+//! account serving one socket per protocol that account declares, best
+//! placed behind a systemd service or equivalent.
 //!
 //! ## Layout
 //!
@@ -31,10 +32,10 @@
 //!
 //! ## Features
 //!
-//! Protocol support (imap, smtp) and the TLS provider (rustls-ring,
-//! rustls-aws, native-tls) are cargo features. Discovery needs both
-//! protocols and a TLS provider, and `sirup configure` says so when it
-//! is built without them.
+//! Protocol support (imap, smtp, sieve) and the TLS provider
+//! (rustls-ring, rustls-aws, native-tls) are cargo features. Discovery
+//! needs both mail protocols and a TLS provider, and `sirup configure`
+//! says so when it is built without them.
 //!
 //! The design memory lives in the cairn/ folder (the Cairn convention:
 //! spec/ for current truth, changes/ for proposals, log/ for history).

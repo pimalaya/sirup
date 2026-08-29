@@ -85,7 +85,11 @@ pub fn defaults(config: &DiscoveryAutoconfig) -> DiscoveryResult {
         .find(|s| matches!(s.r#type, DiscoveryServerType::Smtp))
         .and_then(smtp_from_server);
 
-    DiscoveryResult { imap, smtp }
+    DiscoveryResult {
+        imap,
+        smtp,
+        sieve: None,
+    }
 }
 
 fn summary(label: &str, domain: &str, config: &DiscoveryAutoconfig) -> String {

@@ -35,7 +35,7 @@ use crate::{
 #[command(name = env!("CARGO_PKG_NAME"))]
 #[command(author, version, about)]
 #[command(long_about = concat!(
-    "CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix sockets.\n\n",
+    "CLI to spawn pre-authenticated IMAP/SMTP/ManageSieve sessions and expose them via Unix sockets.\n\n",
     "First time here? Run `sirup` with no command: it offers to generate an account ",
     "discovered from your email address, which `sirup configure` does again later. ",
     "Everything discovery does not cover is written by hand.",
@@ -153,12 +153,9 @@ impl Command {
                 for protocol in protocols {
                     let server = account.server(protocol).expect("selected block exists");
                     let sock_path = sock_path(&config, &name, protocol, server);
-                    let (url, tls, starttls, sasl) =
-                        server.resolve_connection(protocol, &mut secrets)?;
+                    let connection = server.resolve_connection(protocol, &mut secrets)?;
 
-                    upstreams.push(session::open(
-                        protocol, sock_path, url, tls, starttls, sasl,
-                    )?);
+                    upstreams.push(session::open(protocol, sock_path, connection)?);
                 }
 
                 drop(secrets);
@@ -261,7 +258,7 @@ fn declared_protocols(account: &AccountConfig, account_name: &str) -> Result<Vec
 
     if declared.is_empty() {
         bail!(
-            "Account `{account_name}` declares no server, add an `imap` or an `smtp` block: {CONFIG_SAMPLE_URL}"
+            "Account `{account_name}` declares no server, add an `imap`, an `smtp` or a `sieve` block: {CONFIG_SAMPLE_URL}"
         );
     }
 

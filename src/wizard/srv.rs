@@ -61,7 +61,11 @@ pub fn defaults(report: &DiscoverySrvReport) -> DiscoveryResult {
 
     let smtp = report.submission.as_ref().map(smtp_from_service);
 
-    DiscoveryResult { imap, smtp }
+    DiscoveryResult {
+        imap,
+        smtp,
+        sieve: None,
+    }
 }
 
 fn summary(domain: &str, report: &DiscoverySrvReport) -> String {

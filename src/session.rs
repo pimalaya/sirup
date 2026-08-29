@@ -34,6 +34,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{config::Connection, protocol::Protocol};
 use anyhow::{Result, bail};
 #[cfg(feature = "imap")]
 use io_imap::{
@@ -48,7 +49,12 @@ use io_imap::{
         response::{Capability, Code, Greeting},
     },
 };
-use io_sasl::mechanism::Sasl;
+#[cfg(feature = "sieve")]
+use io_managesieve::{
+    client::{ManagesieveClient, ManagesieveClientStd},
+    rfc5804::capability::ManagesieveCapabilities,
+    session::ManagesieveSessionOpenOptions,
+};
 #[cfg(feature = "smtp")]
 use io_smtp::{
     client::{SmtpClient, SmtpClientStd},
@@ -57,12 +63,13 @@ use io_smtp::{
 };
 use log::{info, warn};
 use pimalaya_cli::spinner::Spinner;
-use pimalaya_stream::{retry::Retry, stream::Stream, tls::Tls};
+use pimalaya_stream::{retry::Retry, stream::Stream};
 #[cfg(windows)]
 use uds_windows::{UnixListener, UnixStream};
-use url::Url;
 
-use crate::protocol::Protocol;
+/// The tag the ManageSieve keepalive NOOP carries and expects echoed.
+#[cfg(feature = "sieve")]
+const KEEPALIVE_TAG: &str = "sirup-keepalive";
 
 /// An authenticated upstream session, one variant per protocol.
 ///
@@ -80,10 +87,18 @@ pub enum Session {
     /// An authenticated SMTP submission session.
     #[cfg(feature = "smtp")]
     Smtp(SmtpClientStd),
+    /// An authenticated ManageSieve session and the capabilities the
+    /// upstream last reported, replayed as the synthesized greeting.
+    #[cfg(feature = "sieve")]
+    Managesieve {
+        client: ManagesieveClientStd,
+        capabilities: ManagesieveCapabilities,
+    },
     /// Placeholder keeping the enum inhabited when no protocol feature is
     /// enabled.
     #[cfg(not(feature = "imap"))]
     #[cfg(not(feature = "smtp"))]
+    #[cfg(not(feature = "sieve"))]
     Invalid,
 }
 
@@ -100,8 +115,11 @@ impl Session {
             Self::Imap { client, .. } => client.stream.as_any_mut(),
             #[cfg(feature = "smtp")]
             Self::Smtp(client) => client.stream.as_any_mut(),
+            #[cfg(feature = "sieve")]
+            Self::Managesieve { client, .. } => client.stream.as_any_mut(),
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
+            #[cfg(not(feature = "sieve"))]
             Self::Invalid => return None,
         };
 
@@ -144,14 +162,34 @@ impl Session {
     }
 
     /// Sends a protocol-level NOOP to keep the upstream session alive.
+    ///
+    /// The ManageSieve one carries a tag the server echoes back in the
+    /// TAG response code, which no other reply on that stream can
+    /// carry: an echo that does not match means the reply belongs to
+    /// something else and the stream is out of step, so it fails rather
+    /// than proxying a desynchronised session to the next client.
+    /// Neither IMAP nor SMTP can promise as much.
     pub fn noop(&mut self) -> Result<()> {
         match self {
             #[cfg(feature = "imap")]
             Self::Imap { client, .. } => Ok(client.noop()?),
             #[cfg(feature = "smtp")]
             Self::Smtp(client) => Ok(client.noop()?),
+            #[cfg(feature = "sieve")]
+            Self::Managesieve { client, .. } => {
+                // NOTE: only one NOOP is ever in flight, the keepalive
+                // firing from the accept loop with no client attached,
+                // so a constant tag identifies it as well as a counter.
+                let echoed = client.noop(Some(String::from(KEEPALIVE_TAG)))?;
+
+                match echoed.as_deref() {
+                    Some(KEEPALIVE_TAG) | None => Ok(()),
+                    Some(tag) => bail!("ManageSieve NOOP echoed tag `{tag}`, stream out of step"),
+                }
+            }
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
+            #[cfg(not(feature = "sieve"))]
             Self::Invalid => Ok(()),
         }
     }
@@ -164,8 +202,11 @@ impl Read for Session {
             Self::Imap { client, .. } => client.stream.read(buf),
             #[cfg(feature = "smtp")]
             Self::Smtp(client) => client.stream.read(buf),
+            #[cfg(feature = "sieve")]
+            Self::Managesieve { client, .. } => client.stream.read(buf),
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
+            #[cfg(not(feature = "sieve"))]
             Self::Invalid => Ok(0),
         }
     }
@@ -178,8 +219,11 @@ impl Write for Session {
             Self::Imap { client, .. } => client.stream.write(buf),
             #[cfg(feature = "smtp")]
             Self::Smtp(client) => client.stream.write(buf),
+            #[cfg(feature = "sieve")]
+            Self::Managesieve { client, .. } => client.stream.write(buf),
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
+            #[cfg(not(feature = "sieve"))]
             Self::Invalid => Ok(0),
         }
     }
@@ -190,8 +234,11 @@ impl Write for Session {
             Self::Imap { client, .. } => client.stream.flush(),
             #[cfg(feature = "smtp")]
             Self::Smtp(client) => client.stream.flush(),
+            #[cfg(feature = "sieve")]
+            Self::Managesieve { client, .. } => client.stream.flush(),
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
+            #[cfg(not(feature = "sieve"))]
             Self::Invalid => Ok(()),
         }
     }
@@ -199,13 +246,7 @@ impl Write for Session {
 
 /// Opens and authenticates the upstream session for `protocol`. Shared
 /// by [`open`] and [`test()`].
-fn connect(
-    protocol: Protocol,
-    url: Url,
-    tls: Tls,
-    starttls: bool,
-    sasl: Option<Sasl>,
-) -> Result<Session> {
+fn connect(protocol: Protocol, connection: Connection) -> Result<Session> {
     Ok(match protocol {
         #[cfg(feature = "imap")]
         #[cfg(any(
@@ -215,10 +256,11 @@ fn connect(
         ))]
         Protocol::Imap => {
             let opts = ImapSessionOpenOptions {
-                starttls,
+                starttls: connection.starttls,
                 ..Default::default()
             };
-            let (client, capability) = ImapClientStd::connect(&url, &tls, sasl, opts)?;
+            let (client, capability) =
+                ImapClientStd::connect(&connection.url, &connection.tls, connection.sasl, opts)?;
             Session::Imap { client, capability }
         }
         #[cfg(feature = "smtp")]
@@ -229,15 +271,47 @@ fn connect(
         ))]
         Protocol::Smtp => {
             let domain: SmtpEhloDomain<'static> = Ipv4Addr::new(127, 0, 0, 1).into();
-            let opts = SmtpSessionOpenOptions { starttls };
-            let (client, _capabilities) = SmtpClientStd::connect(&url, &tls, domain, sasl, opts)?;
+            let opts = SmtpSessionOpenOptions {
+                starttls: connection.starttls,
+            };
+            let (client, _capabilities) = SmtpClientStd::connect(
+                &connection.url,
+                &connection.tls,
+                domain,
+                connection.sasl,
+                opts,
+            )?;
             Session::Smtp(client)
+        }
+        #[cfg(feature = "sieve")]
+        #[cfg(any(
+            feature = "rustls-ring",
+            feature = "rustls-aws",
+            feature = "native-tls"
+        ))]
+        Protocol::Sieve => {
+            let opts = ManagesieveSessionOpenOptions {
+                starttls: connection.starttls,
+                allow_cleartext_auth: connection.allow_cleartext_auth,
+            };
+            let (client, capabilities) = ManagesieveClientStd::connect(
+                &connection.url,
+                &connection.tls,
+                connection.sasl,
+                opts,
+            )?;
+            Session::Managesieve {
+                client,
+                capabilities,
+            }
         }
 
         #[cfg(not(feature = "imap"))]
         Protocol::Imap => bail!("Missing cargo feature: `imap`"),
         #[cfg(not(feature = "smtp"))]
         Protocol::Smtp => bail!("Missing cargo feature: `smtp`"),
+        #[cfg(not(feature = "sieve"))]
+        Protocol::Sieve => bail!("Missing cargo feature: `sieve`"),
         #[cfg(not(feature = "rustls-aws"))]
         #[cfg(not(feature = "rustls-ring"))]
         #[cfg(not(feature = "native-tls"))]
@@ -251,14 +325,8 @@ fn connect(
 /// binding any socket. Used by the wizard to validate a freshly-built
 /// account before handing it back.
 #[cfg(discovery)]
-pub fn test(
-    protocol: Protocol,
-    url: Url,
-    tls: Tls,
-    starttls: bool,
-    sasl: Option<Sasl>,
-) -> Result<()> {
-    let _ = connect(protocol, url, tls, starttls, sasl)?;
+pub fn test(protocol: Protocol, connection: Connection) -> Result<()> {
+    let _ = connect(protocol, connection)?;
     Ok(())
 }
 
@@ -275,17 +343,10 @@ pub struct Upstream {
 /// protocols can open them one at a time, reporting on each, and reach
 /// [`serve`] with either every session up or none: a failure here leaves
 /// no socket bound behind it.
-pub fn open(
-    protocol: Protocol,
-    sock_path: PathBuf,
-    url: Url,
-    tls: Tls,
-    starttls: bool,
-    sasl: Option<Sasl>,
-) -> Result<Upstream> {
+pub fn open(protocol: Protocol, sock_path: PathBuf, connection: Connection) -> Result<Upstream> {
     let spinner = Spinner::start(format!("Opening the {protocol} session"));
 
-    let session = match connect(protocol, url, tls, starttls, sasl) {
+    let session = match connect(protocol, connection) {
         Ok(session) => session,
         Err(err) => {
             spinner.failure(format!("Cannot open the {protocol} session"));
@@ -357,6 +418,78 @@ pub fn serve(upstreams: Vec<Upstream>) -> Result<()> {
             .find(Result::is_err)
             .unwrap_or(Ok(()))
     })
+}
+
+/// Renders the ManageSieve greeting an attached client reads: the
+/// capabilities the upstream last reported, then an `OK` completion.
+///
+/// On ManageSieve the greeting *is* the capability response ([RFC 5804
+/// section 1.7]), so what a client reads here is the real thing rather
+/// than the invented ready line SMTP has to make do with. The upstream
+/// greeting was consumed during connect and is never forwarded.
+///
+/// STARTTLS and SASL are dropped from the set. Neither is reachable
+/// across the socket, the connection being already encrypted and already
+/// authenticated, and advertising either invites an attached client to
+/// attempt it. OWNER stays: it is how a client reads back the identity
+/// the upstream settled on.
+///
+/// [RFC 5804 section 1.7]: https://www.rfc-editor.org/rfc/rfc5804#section-1.7
+#[cfg(feature = "sieve")]
+fn managesieve_greeting(capabilities: &ManagesieveCapabilities) -> Vec<u8> {
+    const UNREACHABLE: [&str; 2] = ["STARTTLS", "SASL"];
+
+    let mut greeting = Vec::new();
+
+    for capability in &capabilities.capabilities {
+        if UNREACHABLE
+            .iter()
+            .any(|name| capability.name.eq_ignore_ascii_case(name))
+        {
+            continue;
+        }
+
+        greeting.extend_from_slice(&quote(&capability.name));
+
+        if let Some(value) = &capability.value {
+            greeting.push(b' ');
+            greeting.extend_from_slice(&quote(value));
+        }
+
+        greeting.extend_from_slice(b"\r\n");
+    }
+
+    greeting.extend_from_slice(b"OK \"Sirup ManageSieve pre-auth session ready\"\r\n");
+    greeting
+}
+
+/// Renders `value` as a ManageSieve quoted string ([RFC 5804 section
+/// 4]), escaping the backslash and the double quote.
+///
+/// A capability name or value travels on one line by construction, the
+/// response grammar being line-based, so the literal form the
+/// specification also allows is never needed here. A CR or an LF that
+/// reached this far anyway is dropped rather than allowed to forge a
+/// line of its own.
+///
+/// [RFC 5804 section 4]: https://www.rfc-editor.org/rfc/rfc5804#section-4
+#[cfg(feature = "sieve")]
+fn quote(value: &str) -> Vec<u8> {
+    let mut quoted = Vec::with_capacity(value.len() + 2);
+    quoted.push(b'"');
+
+    for byte in value.bytes() {
+        match byte {
+            b'\r' | b'\n' => continue,
+            b'\\' | b'"' => quoted.push(b'\\'),
+            _ => {}
+        }
+
+        quoted.push(byte);
+    }
+
+    quoted.push(b'"');
+    quoted
 }
 
 /// Removes a stale socket, creates the directory holding it, then binds
@@ -433,8 +566,13 @@ fn serve_one(mut upstream: Upstream, listener: UnixListener, running: &AtomicBoo
             Session::Smtp(_) => {
                 client.write_all(b"220 Sirup SMTP pre-auth session ready\r\n")?;
             }
+            #[cfg(feature = "sieve")]
+            Session::Managesieve { capabilities, .. } => {
+                client.write_all(&managesieve_greeting(capabilities))?;
+            }
             #[cfg(not(feature = "imap"))]
             #[cfg(not(feature = "smtp"))]
+            #[cfg(not(feature = "sieve"))]
             Session::Invalid => (),
         }
 
@@ -596,4 +734,86 @@ fn is_timeout(err: &io::Error) -> bool {
         err.kind(),
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
     )
+}
+
+#[cfg(all(test, feature = "sieve"))]
+mod tests {
+    use io_managesieve::rfc5804::capability::ManagesieveCapability;
+
+    use super::*;
+
+    fn capability(name: &str, value: Option<&str>) -> ManagesieveCapability {
+        ManagesieveCapability {
+            name: String::from(name),
+            value: value.map(String::from),
+        }
+    }
+
+    fn capabilities() -> ManagesieveCapabilities {
+        ManagesieveCapabilities {
+            capabilities: vec![
+                capability("IMPLEMENTATION", Some("Dovecot Pigeonhole")),
+                capability("SIEVE", Some("fileinto reject envelope")),
+                capability("SASL", Some("PLAIN SCRAM-SHA-256")),
+                capability("STARTTLS", None),
+                capability("OWNER", Some("user@example.com")),
+                capability("VERSION", Some("1.0")),
+            ],
+        }
+    }
+
+    #[test]
+    fn the_greeting_replays_the_capabilities_as_a_response() {
+        let greeting = managesieve_greeting(&capabilities());
+        let greeting = String::from_utf8(greeting).expect("the greeting is UTF-8");
+
+        assert_eq!(
+            greeting,
+            concat!(
+                "\"IMPLEMENTATION\" \"Dovecot Pigeonhole\"\r\n",
+                "\"SIEVE\" \"fileinto reject envelope\"\r\n",
+                "\"OWNER\" \"user@example.com\"\r\n",
+                "\"VERSION\" \"1.0\"\r\n",
+                "OK \"Sirup ManageSieve pre-auth session ready\"\r\n",
+            )
+        );
+    }
+
+    #[test]
+    fn the_greeting_drops_what_the_socket_cannot_reach() {
+        // NOTE: the connection is already encrypted and already
+        // authenticated, so advertising either would only invite an
+        // attached client to attempt it. OWNER is the opposite case: it
+        // is how a client reads back the identity that was settled on.
+        let greeting = managesieve_greeting(&capabilities());
+        let greeting = String::from_utf8(greeting).expect("the greeting is UTF-8");
+
+        assert!(!greeting.contains("STARTTLS"));
+        assert!(!greeting.contains("SASL"));
+        assert!(greeting.contains("OWNER"));
+    }
+
+    #[test]
+    fn a_capability_cannot_forge_a_line_of_its_own() {
+        let capabilities = ManagesieveCapabilities {
+            capabilities: vec![capability(
+                "IMPLEMENTATION",
+                Some("ev\"il\r\nOK \"hijacked"),
+            )],
+        };
+        let greeting = managesieve_greeting(&capabilities);
+        let greeting = String::from_utf8(greeting).expect("the greeting is UTF-8");
+
+        // NOTE: the quote is escaped and the CRLF dropped, so the value
+        // stays one token of one line and the OK below it is the only
+        // completion an attached client reads.
+        assert_eq!(
+            greeting,
+            concat!(
+                "\"IMPLEMENTATION\" \"ev\\\"ilOK \\\"hijacked\"\r\n",
+                "OK \"Sirup ManageSieve pre-auth session ready\"\r\n",
+            )
+        );
+        assert_eq!(greeting.lines().count(), 2);
+    }
 }

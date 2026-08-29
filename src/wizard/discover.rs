@@ -1,7 +1,7 @@
 //! In-memory wizard flow.
 //!
-//! 1. Ask once for an email address, an `imap[s]://` / `smtp[s]://`
-//!    URL, or a bare domain.
+//! 1. Ask once for an email address, an `imap[s]://`, `smtp[s]://` or
+//!    `sieve[s]://` URL, or a bare domain.
 //! 2. URL input: scheme picks the protocol; host/port/TLS come straight
 //!    from the URL, no extra prompt.
 //! 3. Email / domain input: probe PACC → Autoconfig ISP (when an email
@@ -74,20 +74,37 @@ pub fn discovery_tls() -> Tls {
     tls
 }
 
-/// Per-source discovery payload. Sirup only routes IMAP/SMTP, so any
-/// JMAP endpoint a probe might surface is dropped at the source.
+/// Per-source discovery payload. Sirup only routes the SASL-mediated
+/// mail protocols, so any JMAP endpoint a probe might surface is
+/// dropped at the source.
 #[derive(Default)]
 pub struct DiscoveryResult {
     pub imap: Option<WizardImapConfig>,
     pub smtp: Option<WizardSmtpConfig>,
+    pub sieve: Option<SieveEndpoint>,
 }
 
 impl DiscoveryResult {
-    /// Whether neither an IMAP nor an SMTP endpoint was found, marking
-    /// the source as a miss so the discovery chain moves on.
+    /// Whether no endpoint at all was found, marking the source as a
+    /// miss so the discovery chain moves on.
     pub fn is_empty(&self) -> bool {
-        self.imap.is_none() && self.smtp.is_none()
+        self.imap.is_none() && self.smtp.is_none() && self.sieve.is_none()
     }
+}
+
+/// A discovered ManageSieve endpoint.
+///
+/// pimalaya-cli's wizard carries an IMAP and an SMTP shape but no
+/// ManageSieve one, ManageSieve being the protocol none of its prompts
+/// covers, so the three fields sirup needs are named here.
+pub struct SieveEndpoint {
+    /// The server host name.
+    pub host: String,
+    /// The port, 4190 being the only one RFC 5804 registers.
+    pub port: u16,
+    /// Whether the endpoint is reached by upgrading a cleartext
+    /// connection rather than by handshaking straight away.
+    pub starttls: bool,
 }
 
 /// Prompts once for an email address, a server URL or a bare domain,
@@ -118,10 +135,10 @@ pub fn run() -> Result<(String, AccountConfig)> {
 
     for protocol in account.protocols() {
         let server = account.server(protocol).expect("declared block exists");
-        let (url, tls, starttls, sasl) = server.resolve_connection(protocol, &mut secrets)?;
+        let connection = server.resolve_connection(protocol, &mut secrets)?;
         let spinner = Spinner::start(format!("Testing the {protocol} configuration"));
 
-        if let Err(err) = session::test(protocol, url, tls, starttls, sasl) {
+        if let Err(err) = session::test(protocol, connection) {
             spinner.failure(format!("The {protocol} configuration failed"));
             return Err(err);
         }
@@ -221,14 +238,15 @@ fn build_url_account(url: Url, account_name: &str) -> Result<AccountConfig> {
         .find(|protocol| protocol.schemes().contains(&scheme.as_str()));
 
     let Some(protocol) = protocol else {
-        bail!("Unsupported URL scheme `{scheme}`, expects `imap(s)` or `smtp(s)`");
+        bail!("Unsupported URL scheme `{scheme}`, expects `imap(s)`, `smtp(s)` or `sieve(s)`");
     };
 
     let server = ServerConfig {
         server: url.to_string(),
         sock_file: None,
         tls: TlsConfig::default(),
-        starttls: scheme != protocol.default_scheme(),
+        starttls: explicit_starttls(protocol, &scheme),
+        allow_cleartext_auth: false,
         alpn: None,
         sasl: Some(prompt_sasl(account_name, None)?),
     };
@@ -243,6 +261,10 @@ fn build_url_account(url: Url, account_name: &str) -> Result<AccountConfig> {
         },
         Protocol::Smtp => AccountConfig {
             smtp: Some(server),
+            ..Default::default()
+        },
+        Protocol::Sieve => AccountConfig {
+            sieve: Some(server),
             ..Default::default()
         },
     })
@@ -260,17 +282,19 @@ fn build_discovery_account(
     domain: &str,
     account_name: &str,
 ) -> Result<AccountConfig> {
-    let DiscoveryResult { imap, smtp } = discover(local_part, domain);
+    let result = discover(local_part, domain);
 
-    if imap.is_none() && smtp.is_none() {
+    if result.is_empty() {
         bail!(
             "No configuration could be discovered for `{domain}`. \
-             Try giving an `imap[s]://` or `smtp[s]://` URL instead."
+             Try giving an `imap[s]://`, `smtp[s]://` or `sieve[s]://` URL instead."
         );
     }
 
+    let DiscoveryResult { imap, smtp, sieve } = result;
+
     // NOTE: one provider, one credential, so the mechanism is prompted
-    // once and both blocks carry it. A user needing two writes the
+    // once and every block carries it. A user needing two writes the
     // second by hand, which is what the sample documents.
     let login_default = local_part.map(|l| format!("{l}@{domain}"));
     let sasl = prompt_sasl(account_name, login_default.as_deref())?;
@@ -279,7 +303,29 @@ fn build_discovery_account(
         default: false,
         imap: imap.map(|endpoint| build_imap_server(endpoint, sasl.clone())),
         smtp: smtp.map(|endpoint| build_smtp_server(endpoint, sasl.clone())),
+        sieve: build_sieve_server(sieve, sasl),
     })
+}
+
+/// Assembles the `sieve` block from a discovered endpoint.
+#[cfg(feature = "sieve")]
+fn build_sieve_server(sieve: Option<SieveEndpoint>, sasl: SaslConfig) -> Option<ServerConfig> {
+    sieve.map(|endpoint| {
+        build_server(
+            Protocol::Sieve,
+            endpoint.host,
+            endpoint.port,
+            endpoint.starttls,
+            sasl,
+        )
+    })
+}
+
+/// A build without the `sieve` feature cannot serve a ManageSieve
+/// session, so it generates no block promising one.
+#[cfg(not(feature = "sieve"))]
+fn build_sieve_server(_sieve: Option<SieveEndpoint>, _sasl: SaslConfig) -> Option<ServerConfig> {
+    None
 }
 
 /// Probes PACC → Autoconfig ISP (when `local_part` is `Some`) →
@@ -396,17 +442,34 @@ fn build_server(
     sasl: SaslConfig,
 ) -> ServerConfig {
     let scheme = if starttls {
-        protocol.as_str()
+        protocol.cleartext_scheme()
     } else {
-        protocol.default_scheme()
+        protocol.tls_scheme()
     };
 
     ServerConfig {
         server: format!("{scheme}://{host}:{port}"),
         sock_file: None,
         tls: TlsConfig::default(),
-        starttls,
+        starttls: starttls_override(protocol, scheme, starttls),
+        allow_cleartext_auth: false,
         alpn: None,
         sasl: Some(sasl),
     }
+}
+
+/// The `starttls` a generated block carries: [`None`] when the protocol
+/// already answers it for that scheme, so the fragment stays free of
+/// lines restating a default.
+fn starttls_override(protocol: Protocol, scheme: &str, starttls: bool) -> Option<bool> {
+    (starttls != protocol.default_starttls(scheme)).then_some(starttls)
+}
+
+/// The `starttls` a block built from a user-given URL carries.
+///
+/// The scheme is what the user chose, so the switch follows it: a
+/// cleartext scheme is upgraded and an implicit-TLS one is not, unless
+/// the protocol already says exactly that.
+fn explicit_starttls(protocol: Protocol, scheme: &str) -> Option<bool> {
+    starttls_override(protocol, scheme, scheme == protocol.cleartext_scheme())
 }

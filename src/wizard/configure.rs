@@ -39,9 +39,9 @@ use crate::wizard::discover;
 /// Configure an account interactively.
 ///
 /// Discovers a provider from an email address, a domain or an
-/// `imap[s]://` / `smtp[s]://` URL, tests the connection, then writes the
-/// account, appends it to the configuration already there, or prints it
-/// to be placed by hand.
+/// `imap[s]://`, `smtp[s]://` or `sieve[s]://` URL, tests every block it
+/// generates, then writes the account, appends it to the configuration
+/// already there, or prints it to be placed by hand.
 ///
 /// Anything discovery does not cover is written by hand.
 #[derive(Debug, Parser)]
@@ -316,7 +316,8 @@ mod tests {
             server: host.into(),
             sock_file: None,
             tls: TlsConfig::default(),
-            starttls: false,
+            starttls: None,
+            allow_cleartext_auth: false,
             alpn: None,
             sasl: Some(SaslConfig::Plain(SaslPlainConfig {
                 authzid: None,
@@ -326,13 +327,14 @@ mod tests {
         }
     }
 
-    /// The account the wizard builds when discovery returns both
-    /// endpoints: one mailbox, two blocks sharing one credential.
+    /// The account the wizard builds when discovery returns every
+    /// endpoint: one mailbox, three blocks sharing one credential.
     fn account(default: bool) -> AccountConfig {
         AccountConfig {
             default,
             imap: Some(server("imaps://imap.example.com:993")),
             smtp: Some(server("smtps://smtp.example.com:465")),
+            sieve: Some(server("sieves://sieve.example.com:4190")),
         }
     }
 
@@ -344,7 +346,10 @@ mod tests {
 
         assert_eq!(config.accounts.len(), 1);
         assert!(account.default);
-        assert_eq!(account.protocols(), [Protocol::Imap, Protocol::Smtp]);
+        assert_eq!(
+            account.protocols(),
+            [Protocol::Imap, Protocol::Smtp, Protocol::Sieve]
+        );
 
         // NOTE: a generated document holds what was configured, every
         // defaulted field being left out.
@@ -358,9 +363,10 @@ mod tests {
 
     #[test]
     fn each_block_opens_on_its_server() {
-        // NOTE: serialized alphabetically the two blocks would interleave
-        // and each endpoint would sit under the credentials qualifying
-        // it, so the renderer groups and lifts.
+        // NOTE: serialized alphabetically the blocks would interleave and
+        // each endpoint would sit under the credentials qualifying it, so
+        // the renderer groups and lifts. Alphabetically `sieve` would
+        // also come before `smtp`, where the reading order puts it last.
         let document = account(true).render("example").expect("render the account");
         let servers: Vec<&str> = document
             .lines()
@@ -372,6 +378,7 @@ mod tests {
             [
                 "imap.server = \"imaps://imap.example.com:993\"",
                 "smtp.server = \"smtps://smtp.example.com:465\"",
+                "sieve.server = \"sieves://sieve.example.com:4190\"",
             ]
         );
 

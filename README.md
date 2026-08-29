@@ -1,6 +1,6 @@
 # Sirup [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya) [![Sponsor](https://img.shields.io/badge/sponsor-pink?style=flat&logo=github-sponsors&logoColor=white)](https://pimalaya.org/sponsor/)
 
-CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix sockets
+CLI to spawn pre-authenticated IMAP/SMTP/ManageSieve sessions and expose them via Unix sockets
 
 ## Table of contents
 
@@ -16,11 +16,11 @@ CLI to spawn pre-authenticated IMAP/SMTP sessions and expose them via Unix socke
 
 ## Features
 
-- **Pre-authenticated sessions**: connect and log in once, then expose the live IMAP or SMTP session on a Unix socket so any local client can speak the raw protocol without holding your credentials.
-- **One account, every protocol it speaks**: an account declares an `imap` block, an `smtp` block or both, and `sirup start` serves each on its own socket from a single process. Name protocols to narrow it down.
+- **Pre-authenticated sessions**: connect and log in once, then expose the live IMAP, SMTP or ManageSieve session on a Unix socket so any local client can speak the raw protocol without holding your credentials.
+- **One account, every protocol it speaks**: an account declares an `imap`, an `smtp` and a `sieve` block, or any subset, and `sirup start` serves each on its own socket from a single process. Name protocols to narrow it down.
 - **Account discovery wizard**: `sirup configure` finds a provider's servers from an email address, a server URL or a bare domain, tests every block it generates, then writes the account to your configuration, appends it to the one already there, or prints it for you to place by hand.
 - **SASL authentication**: anonymous, login, plain, oauthbearer, xoauth2 and scram-sha-256 (the last requires the `scram` feature).
-- **STARTTLS and implicit TLS**: pick either from the account's server scheme, with the ALPN token inferred per protocol.
+- **STARTTLS and implicit TLS**: pick either from the block server scheme, with the ALPN token and the port inferred per protocol. ManageSieve follows RFC 5804, whose single port reaches TLS through STARTTLS.
 - **REPL**: a built-in reference client that forwards raw commands to the socket, for testing and as an implementation example.
 - **Machine-readable output**: `--json` switches supported commands to JSON for scripts.
 - Full standard, blocking client with **TLS** support:
@@ -119,12 +119,12 @@ Every command and subcommand is documented through --help. The common flows:
 ```sh
 sirup configure                # discover an account and save it
 sirup start                    # serve every protocol the default account declares
-sirup start imap               # ... only its imap block
+sirup start imap sieve         # ... only its imap and sieve blocks
 sirup start --account work     # ... for a named account
 sirup repl imap                # attach the reference client to the imap session
 ```
 
-The start command runs as a blocking daemon, best placed in a systemd service or equivalent. It opens and authenticates one session per protocol the account declares, one at a time, then binds a socket for each and proxies bytes on all of them. Any client that can read from and write to a socket can drive that session; the greeting is replaced by an IMAP PREAUTH line (carrying the upstream capabilities) or an SMTP 220 ready line.
+The start command runs as a blocking daemon, best placed in a systemd service or equivalent. It opens and authenticates one session per protocol the account declares, one at a time, then binds a socket for each and proxies bytes on all of them. Any client that can read from and write to a socket can drive that session; the greeting is replaced by an IMAP PREAUTH line, an SMTP 220 ready line, or the ManageSieve capability response, each carrying what the upstream reported minus what the socket cannot reach.
 
 Nothing is bound until every session is up, so a provider refusing one leaves no half-served daemon behind, and the first session to fail afterwards ends the whole run rather than leaving the unit looking healthy. Sockets land at `<socks-dir>/sirup/<account>-<protocol>.sock`, which is the path a client points its `unix://` server at.
 

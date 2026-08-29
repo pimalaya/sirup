@@ -108,6 +108,9 @@ pub struct AccountConfig {
     /// socket.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub smtp: Option<ServerConfig>,
+    /// The ManageSieve server, served on the account's `sieve` socket.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sieve: Option<ServerConfig>,
 }
 
 impl AccountConfig {
@@ -117,6 +120,7 @@ impl AccountConfig {
         match protocol {
             Protocol::Imap => self.imap.as_ref(),
             Protocol::Smtp => self.smtp.as_ref(),
+            Protocol::Sieve => self.sieve.as_ref(),
         }
     }
 
@@ -194,7 +198,7 @@ impl AccountConfig {
 
 /// The order a rendered account's groups read in: the account's own
 /// switches, then one block per protocol.
-const RENDER_ORDER: [&str; 3] = ["default", "imap", "smtp"];
+const RENDER_ORDER: [&str; 4] = ["default", "imap", "smtp", "sieve"];
 
 /// One protocol's server: where it is, how the connection is secured and
 /// who it authenticates as.
@@ -218,12 +222,29 @@ pub struct ServerConfig {
     #[serde(default, skip_serializing_if = "is_default_tls")]
     pub tls: TlsConfig,
     /// Whether to upgrade a plaintext connection with STARTTLS. Only
-    /// valid with the cleartext scheme (`imap://`, `smtp://`).
+    /// valid with the cleartext scheme (`imap://`, `smtp://`,
+    /// `sieve://`).
+    ///
+    /// Omitted, it follows the protocol: on ManageSieve a cleartext
+    /// server is upgraded, RFC 5804 defining that as the way to reach
+    /// TLS on its single port; IMAP and SMTP have an implicit-TLS
+    /// scheme of their own, so theirs stays off until asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub starttls: Option<bool>,
+    /// Whether a SASL mechanism disclosing a reusable credential may
+    /// run over a connection that is still in the clear.
+    ///
+    /// PLAIN, LOGIN, OAUTHBEARER and XOAUTH2 hand a passive observer
+    /// something it can replay. Only the ManageSieve session enforces
+    /// this today, refusing them by default as RFC 5804 section 5 asks;
+    /// the IMAP and SMTP sessions send what they are configured to
+    /// send.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub starttls: bool,
+    pub allow_cleartext_auth: bool,
     /// ALPN protocol identifiers offered during the TLS handshake.
     /// `None` (field omitted) takes the protocol's own: `["imap"]` for
-    /// IMAP, `["smtp"]` for SMTP. `Some([])` disables ALPN entirely;
+    /// IMAP, `["smtp"]` for SMTP, none at all for ManageSieve, which
+    /// registers no identifier. `Some([])` disables ALPN entirely;
     /// `Some(["x"])` overrides with a custom list. Only relevant for the
     /// rustls provider; `native-tls` ignores ALPN.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -234,21 +255,39 @@ pub struct ServerConfig {
     pub sasl: Option<SaslConfig>,
 }
 
+/// Everything opening one upstream session needs, resolved from a
+/// [`ServerConfig`] and the protocol whose block it came from.
+///
+/// A struct rather than the tuple it grew out of: five values threaded
+/// through two call sites read better named than positioned.
+pub struct Connection {
+    /// The server URL, its scheme filled in when the block left it out.
+    pub url: Url,
+    /// The TLS handle, carrying the resolved ALPN list.
+    pub tls: Tls,
+    /// Whether to upgrade the connection with STARTTLS.
+    pub starttls: bool,
+    /// Whether a credential-disclosing mechanism may run in the clear.
+    pub allow_cleartext_auth: bool,
+    /// The resolved SASL credentials, `None` to skip authentication.
+    pub sasl: Option<Sasl>,
+}
+
 impl ServerConfig {
-    /// Resolves the runtime connection parameters: the server URL, the
-    /// TLS handle, the STARTTLS switch and the SASL credentials.
+    /// Resolves everything opening the session needs.
     ///
-    /// A missing scheme, a missing ALPN and a portless URL all take the
-    /// protocol's own defaults. Secrets go through `secrets` rather than
-    /// resolving themselves, so one credential command named by two
-    /// blocks of an account is spawned once.
+    /// A missing scheme, a missing ALPN, a missing STARTTLS switch and a
+    /// portless URL all take the protocol's own defaults. Secrets go
+    /// through `secrets` rather than resolving themselves, so one
+    /// credential command named by several blocks of an account is
+    /// spawned once.
     pub fn resolve_connection(
         &self,
         protocol: Protocol,
         secrets: &mut SecretResolver,
-    ) -> Result<(Url, Tls, bool, Option<Sasl>)> {
-        let server = parse_server(&self.server, protocol)?;
-        let scheme = server.scheme();
+    ) -> Result<Connection> {
+        let url = parse_server(&self.server, protocol)?;
+        let scheme = url.scheme();
 
         // NOTE: an explicit empty vec disables ALPN, a non-empty one
         // overrides the protocol's default.
@@ -264,15 +303,21 @@ impl ServerConfig {
             .sasl
             .clone()
             .map(|cfg| {
-                let host = server.host_str().unwrap_or_default();
-                let port = server
-                    .port()
-                    .unwrap_or_else(|| protocol.default_port(scheme));
+                let host = url.host_str().unwrap_or_default();
+                let port = url.port().unwrap_or_else(|| protocol.default_port(scheme));
                 cfg.try_into_sasl(host, port, secrets)
             })
             .transpose()?;
 
-        Ok((server, tls, self.starttls, sasl))
+        Ok(Connection {
+            starttls: self
+                .starttls
+                .unwrap_or_else(|| protocol.default_starttls(scheme)),
+            allow_cleartext_auth: self.allow_cleartext_auth,
+            url,
+            tls,
+            sasl,
+        })
     }
 }
 
@@ -560,7 +605,7 @@ mod tests {
 
     use super::*;
 
-    /// An account speaking both protocols, naming every path field the
+    /// An account speaking every protocol, naming every path field the
     /// schema has, each written with a leading tilde.
     fn config() -> Config {
         toml::from_str(
@@ -574,6 +619,7 @@ imap.sock-file = "~/run/work-imap.sock"
 imap.tls.cert = "~/certs/ca.pem"
 smtp.server = "smtp://mail.example.com:587"
 smtp.starttls = true
+sieve.server = "mail.example.com"
 "#,
         )
         .expect("parse the config")
@@ -605,7 +651,7 @@ smtp.starttls = true
 
         assert_eq!(
             config.accounts["work"].protocols(),
-            [Protocol::Imap, Protocol::Smtp]
+            [Protocol::Imap, Protocol::Smtp, Protocol::Sieve]
         );
         assert_eq!(
             config.sock_path("work", Protocol::Smtp),
@@ -624,16 +670,38 @@ smtp.starttls = true
             .as_ref()
             .expect("an imap block");
         let mut secrets = SecretResolver::new();
-        let (server, tls, starttls, sasl) = imap
+        let connection = imap
             .resolve_connection(Protocol::Imap, &mut secrets)
             .expect("resolve the connection");
 
-        assert_eq!(server.scheme(), "imaps");
-        assert_eq!(server.port(), None);
-        assert_eq!(Protocol::Imap.default_port(server.scheme()), 993);
-        assert_eq!(tls.rustls.alpn, ["imap"]);
-        assert!(!starttls);
-        assert!(sasl.is_none());
+        assert_eq!(connection.url.scheme(), "imaps");
+        assert_eq!(connection.url.port(), None);
+        assert_eq!(Protocol::Imap.default_port(connection.url.scheme()), 993);
+        assert_eq!(connection.tls.rustls.alpn, ["imap"]);
+        assert!(!connection.starttls);
+        assert!(connection.sasl.is_none());
+    }
+
+    #[test]
+    fn a_bare_managesieve_authority_is_upgraded_rather_than_encrypted() {
+        // NOTE: RFC 5804 registers one port and reaches TLS on it
+        // through STARTTLS, so the ManageSieve default is the cleartext
+        // scheme plus the upgrade where the other two take implicit TLS.
+        let config = config();
+        let sieve = config.accounts["work"]
+            .sieve
+            .as_ref()
+            .expect("a sieve block");
+        let mut secrets = SecretResolver::new();
+        let connection = sieve
+            .resolve_connection(Protocol::Sieve, &mut secrets)
+            .expect("resolve the connection");
+
+        assert_eq!(connection.url.scheme(), "sieve");
+        assert_eq!(Protocol::Sieve.default_port(connection.url.scheme()), 4190);
+        assert!(connection.starttls);
+        assert!(connection.tls.rustls.alpn.is_empty());
+        assert!(!connection.allow_cleartext_auth);
     }
 
     #[test]

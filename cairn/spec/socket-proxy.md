@@ -6,7 +6,7 @@ status: current
 
 # Socket proxy
 
-Sirup separates the credential-holding, TLS-negotiating, authenticated half of a mail session from the clients that use it. The `start` command opens the upstream connection, performs the TLS handshake and SASL authentication once, binds a per-account Unix socket, and from then on proxies raw bytes between the socket and the upstream stream. Any local tool that can read and write a Unix socket speaks raw IMAP or SMTP without ever seeing the credentials or repeating the handshake.
+Sirup separates the credential-holding, TLS-negotiating, authenticated half of a mail session from the clients that use it. The `start` command opens one upstream connection per protocol the account declares, performs the TLS handshake and SASL authentication once for each, binds a socket per protocol, and from then on proxies raw bytes between each socket and its upstream stream. Any local tool that can read and write a Unix socket speaks raw IMAP, SMTP or ManageSieve without ever seeing the credentials or repeating the handshake.
 
 ### Requirement: Authenticate once, proxy bytes
 `sirup start` SHALL open the upstream connection, complete the TLS handshake and SASL authentication a single time, then bind a Unix socket and proxy raw bytes in both directions between an attached client and the upstream stream.
@@ -57,7 +57,7 @@ Sirup SHALL run as a long-lived daemon, one instance per account, so the cost of
 Every upstream SHALL be opened and authenticated before any socket is bound, one at a time so their progress reports do not interleave. An upstream that cannot open SHALL abort the whole run, leaving no socket bound behind it.
 
 #### Scenario: One provider refuses
-- GIVEN an account declaring two blocks, one of which the provider rejects
+- GIVEN an account declaring several blocks, one of which the provider rejects
 - WHEN `sirup start` runs
 - THEN it fails naming that protocol and no socket was bound for either
 
@@ -100,3 +100,11 @@ A `pimalaya-stream` stream retries a read or a write that reports it is not read
 - GIVEN the proxy loop has put the upstream in non-blocking mode
 - WHEN a pass finds nothing to relay
 - THEN the read hands back a not-ready failure at once, rather than being retried for a minute and then failing as a timeout
+
+### Requirement: ManageSieve upstream session
+Sirup SHALL serve a third protocol, ManageSieve, behind a `sieve` cargo feature. The block's `server` SHALL accept `sieve://` for cleartext, `sieves://` for implicit TLS and a bare authority taking the former, alongside the IMAP and SMTP schemes. The upstream session SHALL be opened, TLS-negotiated and authenticated once by io-managesieve, exactly as the other two are by io-imap and io-smtp.
+
+#### Scenario: ManageSieve client attaches
+- GIVEN a `sirup start` daemon that has authenticated an upstream ManageSieve session and bound its socket
+- WHEN a local client connects to the socket and writes `LISTSCRIPTS`
+- THEN the bytes are forwarded upstream and the response is forwarded back, without any further handshake or credential exchange

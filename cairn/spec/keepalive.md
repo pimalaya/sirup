@@ -20,3 +20,11 @@ While idle, Sirup SHALL issue a NOOP on a four-minute cadence, chosen to sit und
 - GIVEN a running daemon
 - WHEN a client sends traffic before the cadence elapses
 - THEN the keepalive timer is reset and no idle NOOP is issued
+
+### Requirement: The ManageSieve keepalive is tagged
+The ManageSieve `NOOP` SHALL carry a tag, which the server echoes back in the `TAG` response code, so a keepalive reply is distinguishable from anything else arriving on the stream. An echo that does not match SHALL end the run rather than leave a desynchronised session to be proxied to the next client. The thirty-minute ManageSieve inactivity minimum sits above the shared four-minute cadence, so no separate one is needed.
+
+#### Scenario: Keepalive reply is identified
+- GIVEN a running ManageSieve daemon with no attached client
+- WHEN the idle cadence elapses and Sirup issues its tagged `NOOP`
+- THEN the server echoes the tag, the session stays authenticated, and a reply carrying any other tag ends the run

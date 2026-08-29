@@ -3,12 +3,13 @@
 //! A minimal interactive client that attaches to the Unix socket a
 //! running [`crate::session`] daemon exposes and forwards raw protocol
 //! lines both ways. It is a testing aid and a worked example of driving
-//! the socket. One submodule per protocol, since IMAP tags its commands
-//! while SMTP does not.
+//! the socket. One submodule per protocol: IMAP tags its commands, SMTP
+//! does not, and ManageSieve frames its responses with literals the
+//! library parses rather than a reader guesses.
 
 use std::path::PathBuf;
 
-#[cfg(not(all(feature = "imap", feature = "smtp")))]
+#[cfg(not(all(feature = "imap", feature = "smtp", feature = "sieve")))]
 use anyhow::bail;
 use anyhow::{Context, Result};
 
@@ -37,6 +38,10 @@ fn connect(protocol: Protocol, sock_path: PathBuf) -> Result<()> {
         Protocol::Smtp => smtp::start(sock_path),
         #[cfg(not(feature = "smtp"))]
         Protocol::Smtp => bail!("Missing cargo feature: `smtp`"),
+        #[cfg(feature = "sieve")]
+        Protocol::Sieve => sieve::start(sock_path),
+        #[cfg(not(feature = "sieve"))]
+        Protocol::Sieve => bail!("Missing cargo feature: `sieve`"),
     }
 }
 
@@ -179,6 +184,62 @@ pub mod smtp {
                     break;
                 }
             }
+        }
+
+        Ok(())
+    }
+}
+
+/// ManageSieve reference client: drives io-managesieve's own client over
+/// the socket, so the framing is the library's rather than a guess.
+///
+/// ManageSieve answers with data lines followed by a completion line,
+/// and a data line may carry a length-prefixed literal whose payload is
+/// free to contain anything, a line reading `OK` included. Reading it by
+/// eye is what the other two clients do; here the parser is public, so
+/// the reference client uses it and a downloaded script comes back
+/// whole.
+#[cfg(feature = "sieve")]
+pub mod sieve {
+    #[cfg(unix)]
+    use std::os::unix::net::UnixStream;
+    use std::{
+        io::{BufRead, BufReader, Write, stdin, stdout},
+        path::PathBuf,
+    };
+
+    use anyhow::Result;
+    use io_managesieve::client::{ManagesieveClient, ManagesieveClientStd};
+    #[cfg(windows)]
+    use uds_windows::UnixStream;
+
+    /// Connects to `sock_path`, reads the greeting Sirup synthesized,
+    /// then relays raw commands and their responses.
+    pub fn start(sock_path: PathBuf) -> Result<()> {
+        let stream = UnixStream::connect(&sock_path)?;
+        let mut client = ManagesieveClientStd::new(stream);
+
+        // NOTE: the greeting is a capability response, so it is read
+        // with the same coroutine an upstream connection uses.
+        let capabilities = client.greeting()?;
+        println!("S: {capabilities}");
+
+        let stdin = BufReader::new(stdin());
+        let mut stdout = stdout();
+
+        for line in stdin.lines() {
+            let line = line?;
+            let command = line.trim();
+
+            if command.is_empty() {
+                continue;
+            }
+
+            println!("C: {command}");
+            stdout.flush()?;
+
+            let response = client.raw(command.as_bytes().to_vec())?;
+            println!("S: {response}");
         }
 
         Ok(())

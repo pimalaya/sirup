@@ -6,8 +6,9 @@
 //! [`configure`] owns what happens to that table (created, appended or
 //! printed) and is always compiled, so `sirup configure` exists whatever
 //! the feature set and says what is missing when it cannot run. The
-//! discovery probes need both protocols and a TLS provider, and are
-//! gated on the `discovery` cfg the build script sets.
+//! discovery probes need both mail protocols and a TLS provider, and are
+//! gated on the `discovery` cfg the build script sets. A ManageSieve
+//! block is generated only when the `sieve` feature can serve one.
 
 #[cfg(discovery)]
 pub mod autoconfig;

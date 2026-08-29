@@ -127,3 +127,34 @@ smtp.server = "smtp.example.com"
 #smtp.alpn = ["smtp"]
 smtp.sasl.plain.username = "user@example.com"
 smtp.sasl.plain.password.raw = "***"
+
+# --------------------------------------------------------------------------------
+# ManageSieve block
+# --------------------------------------------------------------------------------
+#
+# Same fields again, with one difference that matters: RFC 5804 registers a
+# single port (4190) and reaches TLS on it through STARTTLS, so a bare authority
+# takes `sieve://` and is upgraded rather than encrypted from the first byte.
+# `sieves://` is for the deployments the specification does not define, listening
+# for a handshake straight away; it rides the same port.
+
+sieve.server = "sieve.example.com"
+#sieve.sock-file = "/run/user/1000/sirup/example-sieve.sock"
+
+# Omitted, STARTTLS follows the scheme here: on for `sieve://`, off for
+# `sieves://`. Setting it to false on a `sieve://` server leaves the connection
+# in the clear, which is what the next option then has to allow.
+#sieve.starttls = true
+
+# Whether a SASL mechanism disclosing a reusable credential (plain, login,
+# oauthbearer, xoauth2) may run over a connection still in the clear. RFC 5804
+# section 5 asks for the refusal, so it is off; scram-sha-256 and anonymous
+# disclose nothing and are unaffected. Only the ManageSieve session enforces it.
+#sieve.allow-cleartext-auth = false
+
+# ManageSieve registers no ALPN identifier, so none is offered unless you name
+# one.
+#sieve.alpn = []
+
+sieve.sasl.plain.username = "user@example.com"
+sieve.sasl.plain.password.raw = "***"

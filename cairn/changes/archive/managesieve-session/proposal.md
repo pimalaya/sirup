@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: managesieve-session
-status: active
+status: landed
 created: 2026-08-25
 ---
 
