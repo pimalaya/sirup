@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Bumped rustls to 0.23.46, domain to 0.12.3, ctutils to 0.4.6, rustls-webpki to 0.103.16 and webpki-root-certs to 1.0.11, fixing RUSTSEC-2026-0285, RUSTSEC-2026-0310, RUSTSEC-2026-0346 to RUSTSEC-2026-0349, RUSTSEC-2026-0382, RUSTSEC-2026-0383 and RUSTSEC-2026-0385.
 - **BREAKING**: an account declares one server per protocol rather than a single one. `server`, `sock-file`, `tls`, `starttls`, `alpn` and `sasl` move from the account into an `imap`, an `smtp` or a `sieve` block, which is the shape himalaya and the other Pimalaya tools already read, so one mailbox is one account instead of two:
 
   ```toml
