@@ -63,8 +63,8 @@ rustPlatform.buildRustPackage {
     ''
     + ''
       mkdir -p $out/share/{completions,man}
-      ${emulator} "$out"/bin/sirup${exe} manuals "$out"/share/man
-      ${emulator} "$out"/bin/sirup${exe} completions -d "$out"/share/completions bash elvish fish powershell zsh
+      ${emulator} "$out"/bin/sirup${exe} manual -d "$out"/share/man
+      ${emulator} "$out"/bin/sirup${exe} completion -d "$out"/share/completions bash elvish fish powershell zsh
     ''
     + lib.optionalString installManPages ''
       installManPage "$out"/share/man/*
