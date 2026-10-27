@@ -55,3 +55,6 @@ toml = "1.1"
 
 [target.'cfg(windows)'.dependencies]
 uds_windows = "1"
+
+[patch.crates-io]
+pimalaya-cli = { git = "https://github.com/pimalaya/cli", rev = "55b66933950f02541892407667e5e0b254245871" }

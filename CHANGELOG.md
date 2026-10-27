@@ -45,6 +45,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **BREAKING**: renamed `completions` and `manuals` to `completion` and `manual`, the plural staying as a hidden alias.
 - Named the three configuration failures: a missing configuration file names the path it looked for, an unknown `-a` name lists the accounts the configuration does hold, and a missing default names both ways of picking one. All three used to be a bare "Cannot find account".
 - Nothing prompts anymore when the standard input is not a terminal or `--json` is set, and the generated document goes to the standard output whenever the standard output is redirected.
+- Changed piped `--json` output to print one value per line, each schema of `json-schema` to carry an `$id` naming the contract version (`v0.1`), and added `sirup-error`, the schema of the JSON failure object (pimalaya-cli `55b6693`).
 
 ### Fixed
 
