@@ -13,7 +13,7 @@ repository = "https://github.com/pimalaya/sirup"
 
 [features]
 default = ["rustls-ring", "scram", "imap", "smtp", "sieve"]
-imap = ["dep:io-imap", "pimalaya-cli/imap"]
+imap = ["dep:io-imap", "dep:nom", "pimalaya-cli/imap"]
 smtp = ["dep:io-smtp", "pimalaya-cli/smtp"]
 sieve = ["dep:io-managesieve"]
 scram = ["io-imap?/scram", "io-smtp?/scram", "io-managesieve?/scram"]
@@ -36,6 +36,11 @@ anyhow = "1"
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 dirs = "6"
 io-imap = { version = "0.6", default-features = false, features = ["client"], optional = true }
+# NOTE: imap-codec 2.0.0-alpha.9, under io-imap 0.6, uses nom's alloc parsers
+# without asking for the feature, which abnf-core 0.6.1 no longer turns on for
+# it. Never imported, this entry restores the feature until io-imap or
+# imap-codec releases its own fix.
+nom = { version = "7", default-features = false, features = ["alloc"], optional = true }
 io-managesieve = { version = "0.1", default-features = false, features = ["client"], optional = true }
 io-pim-discovery = { version = "0.7", default-features = false, features = ["pacc", "autoconfig", "rfc6186", "client"] }
 io-sasl = { version = "0.1", default-features = false, features = ["scram"] }
