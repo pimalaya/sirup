@@ -9,7 +9,7 @@ status: current
 The accept loop is non-blocking and polls with a short timeout so it can interleave two duties: accepting a new client and keeping the upstream session warm while idle. This prevents the upstream server from dropping an authenticated session that no client is currently using.
 
 ### Requirement: Idle NOOP cadence
-While idle, Sirup SHALL issue a NOOP on a four-minute cadence, chosen to sit under both the IMAP thirty-minute server-side minimum and the SMTP five-minute receiver timeout, with margin for slow round-trips. Real client traffic SHALL reset the timer, so the NOOP fires only during genuine idleness.
+While idle, Sirup SHALL issue a NOOP on a four-minute cadence, chosen to sit under both the IMAP thirty-minute server-side minimum and the SMTP five-minute receiver timeout, with margin for slow round-trips. Real client traffic SHALL reset the timer, so the NOOP fires only during genuine idleness. The NOOP SHALL be armed with a read deadline above the stream's retry budget and below the cadence, so an upstream that accepts the command and never answers fails the exchange rather than parking the accept loop; the failure ends the run like any other upstream failure.
 
 #### Scenario: Session kept warm while idle
 - GIVEN a running daemon with no attached client
@@ -20,6 +20,11 @@ While idle, Sirup SHALL issue a NOOP on a four-minute cadence, chosen to sit und
 - GIVEN a running daemon
 - WHEN a client sends traffic before the cadence elapses
 - THEN the keepalive timer is reset and no idle NOOP is issued
+
+#### Scenario: A stalled upstream is detected
+- GIVEN a running daemon with no attached client
+- WHEN four minutes elapse and the upstream accepts the NOOP without answering
+- THEN the read deadline expires, the NOOP fails, and the daemon exits for its supervisor to restart
 
 ### Requirement: The ManageSieve keepalive is tagged
 The ManageSieve `NOOP` SHALL carry a tag, which the server echoes back in the `TAG` response code, so a keepalive reply is distinguishable from anything else arriving on the stream. An echo that does not match SHALL end the run rather than leave a desynchronised session to be proxied to the next client. The thirty-minute ManageSieve inactivity minimum sits above the shared four-minute cadence, so no separate one is needed.

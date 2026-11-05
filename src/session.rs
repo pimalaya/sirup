@@ -520,6 +520,7 @@ fn serve_one(mut upstream: Upstream, listener: UnixListener, running: &AtomicBoo
     // minimum (RFC 3501 §5.4) and the SMTP 5 min receiver timeout (RFC
     // 5321 §4.5.3.2.7), with margin for slow round-trips.
     const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(4 * 60);
+    const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(90);
     const ACCEPT_POLL: Duration = Duration::from_millis(200);
 
     let protocol = upstream.protocol;
@@ -531,7 +532,7 @@ fn serve_one(mut upstream: Upstream, listener: UnixListener, running: &AtomicBoo
             Ok(pair) => pair,
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 if last_keepalive.elapsed() >= KEEPALIVE_INTERVAL {
-                    conn.set_read_timeout(None)?;
+                    conn.set_read_timeout(Some(KEEPALIVE_TIMEOUT))?;
                     if let Err(err) = conn.noop() {
                         warn!("{protocol} keepalive NOOP failed: {err}");
                         bail!(err);
