@@ -17,8 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   RFC 5804 registers one port, 4190, and reaches TLS on it through STARTTLS, so a bare `sieve.server` authority takes `sieve://` and is upgraded rather than encrypted from the first byte, unlike the IMAP and SMTP blocks. `sieves://` is accepted for the deployments the specification does not define, listening for a handshake straight away.
 
 - Added `<block>.allow-cleartext-auth`, letting a SASL mechanism that discloses a reusable credential run over a connection still in the clear. It is off, RFC 5804 section 5 asking for the refusal, and only the ManageSieve session enforces it today.
-- Added the `configure` command, which runs the account wizard on demand. It discovers a provider, tests the connection, then writes the generated `[accounts.<name>]` table to a configuration that does not exist yet, appends it as plain text to one that does, or prints it. Appending never re-serializes the document, so comments, ordering and hand-written formatting survive, and the generated account claims `default` only when no other account does.
-- Added the `json-schema` command, describing the `--json` payload of `configure`.
+- Added the `json-schema` command, describing the `--json` failure object.
 - Added the `--help` footer carrying the bug tracker and the sponsoring links.
 
 ### Changed
@@ -40,13 +39,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - **BREAKING**: the socket path carries the protocol: `<socks-dir>/sirup/<account>.sock` becomes `<socks-dir>/sirup/<account>-<protocol>.sock`, and `sock-file` overrides it per block. A client pointing a `unix://` server at the old path needs the new one.
 - **BREAKING**: the server scheme is optional now that a block knows its own protocol. `imap.server = "imap.fastmail.com"` takes `imaps://` and `smtp.server = "smtp.fastmail.com"` takes `smtps://`, a full URL still being used verbatim and a scheme the block's protocol does not speak being rejected. `starttls` became optional too, following the protocol when omitted.
-- **BREAKING**: a bare `sirup` no longer runs the wizard. It now offers to generate a configuration when it finds none, and prints the help otherwise. Run `sirup configure` to reach the wizard by name.
+- **BREAKING**: a bare `sirup` no longer runs the wizard, which is gone: Sirup writes no configuration, an account being written by hand from config.sample.toml. A bare `sirup`, or any command finding no configuration, welcomes a person at a terminal with the commands creating the file from the sample, then the `start` to run; a script or a `--json` caller gets the failure alone, naming the path looked for and the sample. A bare `sirup` over a configuration prints the help. io-pim-discovery is no longer a dependency.
 - An account resolves its secrets through one memoizing resolver, so a credential command several blocks name is spawned once. Blocks sharing a `pass` or `gpg` entry unlock the key a single time.
-- The wizard stops asking which protocol to keep when discovery returns several endpoints, and generates a block for each around one set of credentials. PACC is the only step reporting a ManageSieve endpoint: RFC 5804 section 1.8 defines a `_sieve._tcp` SRV record io-pim-discovery does not look up yet, and Mozilla autoconfig has no ManageSieve element at all.
 - **BREAKING**: renamed `completions` and `manuals` to `completion` and `manual`, the plural staying as a hidden alias.
-- Named the three configuration failures: a missing configuration file names the path it looked for, an unknown `-a` name lists the accounts the configuration does hold, and a missing default names both ways of picking one. All three used to be a bare "Cannot find account".
-- Nothing prompts anymore when the standard input is not a terminal or `--json` is set, and the generated document goes to the standard output whenever the standard output is redirected.
-- Changed piped `--json` output to print one value per line, each schema of `json-schema` to carry an `$id` naming the contract version (`v0.1`), and added `sirup-error`, the schema of the JSON failure object (pimalaya-cli `55b6693`).
+- Named the configuration failures: a missing configuration file names the path it looked for, an unknown `-a` name lists the accounts the configuration does hold, a missing default names both ways of picking one, and several accounts marked default are refused rather than one picked at random. All used to be a bare "Cannot find account".
+- **BREAKING**: `-a default` names the account called `default`, like any other name; an absent or empty `-a` takes the account marked default.
+- Changed piped `--json` output to print one value per line, each schema of `json-schema` to carry an `$id` naming the contract version (`v0.1`), and added `sirup-error`, the schema of the JSON failure object.
+- Changed a command line the parser refuses to print the failure object under `--json`, still exiting 2.
+- Moved to pimalaya-cli 0.6, pimalaya-config 0.5, pimalaya-stream 0.4, io-imap 0.11, io-smtp 0.9, io-managesieve 0.4 and io-sasl 0.2, all from crates.io. The `nom` entry restoring the alloc parsers imap-codec 2.0.0-alpha.9 relied on is gone, alpha.10 building without it.
 
 ### Fixed
 

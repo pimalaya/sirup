@@ -5,17 +5,16 @@
 //! payload. [`JsonSchemaCommand`] writes one file per entry. The
 //! `sirup-error` key describes the failure object instead.
 //!
-//! Only the commands returning data appear: `start` and `repl` are
-//! daemons, and completions and man pages are pimalaya-cli's own.
+//! No command returns data: `start` and `repl` are daemons, and
+//! completions and man pages are pimalaya-cli's own, so the failure object
+//! is the one entry.
 //!
-//! [`JsonSchemaCommand`]: pimalaya_cli::clap::commands::JsonSchemaCommand
+//! [`JsonSchemaCommand`]: pimalaya_cli::clap::commands::json_schema::JsonSchemaCommand
 
 use std::collections::BTreeMap;
 
-use pimalaya_cli::{clap::commands::JsonSchemaRegistry, error::ErrorReport};
+use pimalaya_cli::{clap::commands::json_schema::JsonSchemaRegistry, error::ErrorReport};
 use schemars::schema_for;
-
-use crate::wizard::configure::ConfigureOutput;
 
 /// Builds the command-to-schema registry consumed by `json-schema`.
 ///
@@ -33,13 +32,13 @@ pub fn registry() -> JsonSchemaRegistry {
         };
     }
 
-    insert!("sirup-configure", ConfigureOutput);
     insert!("sirup-error", ErrorReport);
 
     JsonSchemaRegistry {
         bin: "sirup",
         version: env!("CARGO_PKG_VERSION"),
         schemas,
+        events: BTreeMap::new(),
     }
 }
 

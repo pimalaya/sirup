@@ -9,4 +9,4 @@ change: machine-output-contract
 - [x] Return a `JsonSchemaRegistry`, register `sirup-error`, assert object roots
 - [x] CHANGELOG
 - [x] Fold into a new cairn/spec/json-output.md; log; land
-- [ ] Move to the pimalaya-cli 0.3.0 release once published
+- [x] Move to the pimalaya-cli 0.3.0 release once published (done by the-released-libraries, 0.6 from crates.io)

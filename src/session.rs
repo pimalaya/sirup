@@ -12,9 +12,7 @@
 //! loop.
 //!
 //! The [`Session`] enum wraps the concrete protocol client and exposes
-//! the stream controls the proxy loop needs. [`test()`] reuses the same
-//! connect path to validate an account without binding a socket, for the
-//! wizard.
+//! the stream controls the proxy loop needs.
 
 #[cfg(feature = "smtp")]
 use std::net::Ipv4Addr;
@@ -61,6 +59,35 @@ use io_smtp::{
     rfc5321::SmtpEhloDomain,
     session::SmtpSessionOpenOptions,
 };
+// NOTE: the connect options exist only with a TLS provider, like `connect`
+// itself.
+#[cfg(all(
+    feature = "imap",
+    any(
+        feature = "rustls-ring",
+        feature = "rustls-aws",
+        feature = "native-tls"
+    )
+))]
+use io_imap::client::ImapClientStdConnectOptions;
+#[cfg(all(
+    feature = "sieve",
+    any(
+        feature = "rustls-ring",
+        feature = "rustls-aws",
+        feature = "native-tls"
+    )
+))]
+use io_managesieve::client::ManagesieveClientStdConnectOptions;
+#[cfg(all(
+    feature = "smtp",
+    any(
+        feature = "rustls-ring",
+        feature = "rustls-aws",
+        feature = "native-tls"
+    )
+))]
+use io_smtp::client::SmtpClientStdConnectOptions;
 use log::{info, warn};
 use pimalaya_cli::spinner::Spinner;
 use pimalaya_stream::{retry::Retry, stream::Stream};
@@ -172,7 +199,10 @@ impl Session {
     pub fn noop(&mut self) -> Result<()> {
         match self {
             #[cfg(feature = "imap")]
-            Self::Imap { client, .. } => Ok(client.noop()?),
+            Self::Imap { client, .. } => {
+                client.noop()?;
+                Ok(())
+            }
             #[cfg(feature = "smtp")]
             Self::Smtp(client) => Ok(client.noop()?),
             #[cfg(feature = "sieve")]
@@ -244,8 +274,7 @@ impl Write for Session {
     }
 }
 
-/// Opens and authenticates the upstream session for `protocol`. Shared
-/// by [`open`] and [`test()`].
+/// Opens and authenticates the upstream session for `protocol`.
 fn connect(protocol: Protocol, connection: Connection) -> Result<Session> {
     Ok(match protocol {
         #[cfg(feature = "imap")]
@@ -255,12 +284,16 @@ fn connect(protocol: Protocol, connection: Connection) -> Result<Session> {
             feature = "native-tls"
         ))]
         Protocol::Imap => {
-            let opts = ImapSessionOpenOptions {
-                starttls: connection.starttls,
+            let opts = ImapClientStdConnectOptions {
+                tls: connection.tls,
+                sasl: connection.sasl,
+                session: ImapSessionOpenOptions {
+                    starttls: connection.starttls,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
-            let (client, capability) =
-                ImapClientStd::connect(&connection.url, &connection.tls, connection.sasl, opts)?;
+            let (client, capability) = ImapClientStd::connect(&connection.url, opts)?;
             Session::Imap { client, capability }
         }
         #[cfg(feature = "smtp")]
@@ -271,16 +304,16 @@ fn connect(protocol: Protocol, connection: Connection) -> Result<Session> {
         ))]
         Protocol::Smtp => {
             let domain: SmtpEhloDomain<'static> = Ipv4Addr::new(127, 0, 0, 1).into();
-            let opts = SmtpSessionOpenOptions {
-                starttls: connection.starttls,
+            let opts = SmtpClientStdConnectOptions {
+                tls: connection.tls,
+                sasl: connection.sasl,
+                session: SmtpSessionOpenOptions {
+                    starttls: connection.starttls,
+                    ..Default::default()
+                },
+                ..Default::default()
             };
-            let (client, _capabilities) = SmtpClientStd::connect(
-                &connection.url,
-                &connection.tls,
-                domain,
-                connection.sasl,
-                opts,
-            )?;
+            let (client, _capabilities) = SmtpClientStd::connect(&connection.url, domain, opts)?;
             Session::Smtp(client)
         }
         #[cfg(feature = "sieve")]
@@ -290,16 +323,18 @@ fn connect(protocol: Protocol, connection: Connection) -> Result<Session> {
             feature = "native-tls"
         ))]
         Protocol::Sieve => {
-            let opts = ManagesieveSessionOpenOptions {
-                starttls: connection.starttls,
-                allow_cleartext_auth: connection.allow_cleartext_auth,
+            let opts = ManagesieveClientStdConnectOptions {
+                tls: connection.tls,
+                sasl: connection.sasl,
+                session: ManagesieveSessionOpenOptions {
+                    starttls: connection.starttls,
+                    allow_cleartext_auth: connection.allow_cleartext_auth,
+                    #[cfg(feature = "scram")]
+                    scram: Default::default(),
+                },
+                ..Default::default()
             };
-            let (client, capabilities) = ManagesieveClientStd::connect(
-                &connection.url,
-                &connection.tls,
-                connection.sasl,
-                opts,
-            )?;
+            let (client, capabilities) = ManagesieveClientStd::connect(&connection.url, opts)?;
             Session::Managesieve {
                 client,
                 capabilities,
@@ -319,15 +354,6 @@ fn connect(protocol: Protocol, connection: Connection) -> Result<Session> {
             bail!("Missing cargo feature: `rustls-aws`, `rustls-ring` or `native-tls`")
         }
     })
-}
-
-/// Connects and authenticates once, then drops the session without
-/// binding any socket. Used by the wizard to validate a freshly-built
-/// account before handing it back.
-#[cfg(discovery)]
-pub fn test(protocol: Protocol, connection: Connection) -> Result<()> {
-    let _ = connect(protocol, connection)?;
-    Ok(())
 }
 
 /// One protocol of an account, authenticated and waiting to be served.

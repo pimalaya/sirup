@@ -20,22 +20,17 @@
 //! the socket and forwards raw commands, used for testing and as an
 //! implementation example.
 //!
-//! ## Wizard
+//! ## First run
 //!
-//! [`wizard`] resolves an account from a single email, URL or domain
-//! input: it probes PACC, Thunderbird Autoconfig and RFC 6186 SRV
-//! through io-pim-discovery, prompts for the SASL credentials, tests the
-//! account by connecting once, then writes it to a configuration that
-//! does not exist yet, appends it to one that does, or prints it. It
-//! runs from `sirup configure`, and from the offer a bare `sirup` raises
-//! when it finds no configuration.
+//! Sirup writes no configuration: an account is written by hand from
+//! config.sample.toml. A person at a terminal missing one meets
+//! pimalaya-cli's welcome, naming the commands creating it from the
+//! sample, a script or a JSON caller getting the failure alone.
 //!
 //! ## Features
 //!
 //! Protocol support (imap, smtp, sieve) and the TLS provider
-//! (rustls-ring, rustls-aws, native-tls) are cargo features. Discovery
-//! needs both mail protocols and a TLS provider, and `sirup configure`
-//! says so when it is built without them.
+//! (rustls-ring, rustls-aws, native-tls) are cargo features.
 //!
 //! The design memory lives in the cairn/ folder (the Cairn convention:
 //! spec/ for current truth, changes/ for proposals, log/ for history).
@@ -46,69 +41,57 @@ mod json_schema;
 mod protocol;
 mod repl;
 mod session;
-mod wizard;
 
-use std::{
-    io::{IsTerminal, stdin},
-    path::PathBuf,
-};
+use std::{path::PathBuf, process};
 
 use anyhow::Result;
-use clap::{CommandFactory, Parser};
 use pimalaya_cli::{
-    error::ErrorReport,
+    clap::{args::LogFlags, parse},
+    error::{EXIT_FAILURE, ErrorReport},
     log::Logger,
-    printer::{Printer, StdoutPrinter},
+    printer::StdoutPrinter,
+    welcome::{is_wanted, shipped_sample},
 };
-use pimalaya_config::toml::TomlConfig;
+use pimalaya_config::toml::ConfigMissingError;
 
-use crate::{cli::Cli, config::Config};
+use crate::cli::{Cli, Command};
 
 fn main() {
-    let cli = Cli::parse();
+    let cli = parse::<Cli>();
     let mut printer = StdoutPrinter::new(&cli.json);
-    let result = execute(cli, &mut printer);
+    let config_paths = &cli.config.paths;
+    let account_name = cli.account.name.as_deref();
+
+    let result = execute(&mut printer, cli.cmd, &cli.log, config_paths, account_name);
+
+    // A person missing a configuration meets the welcome, a script or a
+    // JSON caller the error.
+    if let Err(err) = &result
+        && let Some(missing) = err.downcast_ref::<ConfigMissingError>()
+        && is_wanted(&printer)
+    {
+        let sample = shipped_sample("sirup");
+        let welcome = cli::welcome(&missing.path, config_paths, sample.as_deref());
+        eprint!("{welcome}");
+        process::exit(EXIT_FAILURE);
+    }
+
     ErrorReport::eval(&mut printer, result);
 }
 
-fn execute(cli: Cli, printer: &mut StdoutPrinter) -> Result<()> {
-    Logger::try_init(&cli.log)?;
-    let config_paths = cli.config.paths.as_ref();
-    let account_name = cli.account.name.as_deref();
+/// Runs the parsed command, or meets a bare `sirup`.
+fn execute(
+    printer: &mut StdoutPrinter,
+    cmd: Option<Command>,
+    log: &LogFlags,
+    config_paths: &[PathBuf],
+    account_name: Option<&str>,
+) -> Result<()> {
+    Logger::try_init(log)?;
 
-    let Some(cmd) = cli.cmd else {
-        return meet_bare_invocation(printer, config_paths, account_name.is_some());
+    let Some(cmd) = cmd else {
+        return cli::meet_bare_invocation(config_paths);
     };
 
     cmd.execute(printer, config_paths, account_name)
-}
-
-/// Meets a bare `sirup`, which is where a newcomer lands.
-///
-/// A missing configuration raises the offer; anything else gets the help.
-/// A broken file counts as a configuration, so the offer never writes over
-/// one, and `--account` alone is a half-typed command, not a first run.
-fn meet_bare_invocation(
-    printer: &mut StdoutPrinter,
-    config_paths: &[PathBuf],
-    named_account: bool,
-) -> Result<()> {
-    let configured = Config::from_paths_or_default(config_paths)
-        .ok()
-        .flatten()
-        .is_some();
-
-    if !configured && !named_account && !printer.is_json() && stdin().is_terminal() {
-        let path = Config::target_path(config_paths)?;
-
-        // NOTE: a bare invocation has nothing to run after the offer, so a
-        // declined one falls back to the help.
-        if cli::offer_configuration(printer, config_paths, &path)? {
-            return Ok(());
-        }
-    }
-
-    Cli::command().print_help()?;
-
-    Ok(())
 }

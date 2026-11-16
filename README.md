@@ -18,7 +18,6 @@ CLI to spawn pre-authenticated IMAP/SMTP/ManageSieve sessions and expose them vi
 
 - **Pre-authenticated sessions**: connect and log in once, then expose the live IMAP, SMTP or ManageSieve session on a Unix socket so any local client can speak the raw protocol without holding your credentials.
 - **One account, every protocol it speaks**: an account declares an `imap`, an `smtp` and a `sieve` block, or any subset, and `sirup start` serves each on its own socket from a single process. Name protocols to narrow it down.
-- **Account discovery wizard**: `sirup configure` finds a provider's servers from an email address, a server URL or a bare domain, tests every block it generates, then writes the account to your configuration, appends it to the one already there, or prints it for you to place by hand.
 - **SASL authentication**: anonymous, login, plain, oauthbearer, xoauth2 and scram-sha-256 (the last requires the `scram` feature).
 - **STARTTLS and implicit TLS**: pick either from the block server scheme, with the ALPN token and the port inferred per protocol. ManageSieve follows RFC 5804, whose single port reaches TLS through STARTTLS.
 - **REPL**: a built-in reference client that forwards raw commands to the socket, for testing and as an implementation example.
@@ -94,15 +93,7 @@ nix run
 
 ## Configuration
 
-Run `sirup configure` to launch the wizard: it asks for an email address, a server URL or a bare domain, runs provider discovery, prompts for the SASL credentials, tests the account by connecting once, then offers to save it as an `[accounts.<name>]` table. A bare `sirup` raises the same offer when it finds no configuration, and prints the help otherwise.
-
-A configuration file that does not exist yet is written whole. One that exists is appended to as plain text, so its comments, its ordering and its formatting survive: the wizard generates an account, it never edits one. Everything discovery does not cover is written by hand against [config.sample.toml](./config.sample.toml).
-
-Prompts render on stderr, so a redirected stdout carries the generated table alone and nothing is written to disk:
-
-```sh
-sirup configure >> ~/.config/sirup/config.toml
-```
+Sirup writes no configuration: an account is written by hand against [config.sample.toml](./config.sample.toml). A bare `sirup`, or any command finding no configuration, welcomes you at a terminal with the commands creating the file from that sample, then the one opening the sessions. A script or a `--json` caller gets the failure alone, naming the path looked for and the sample.
 
 A configuration is loaded from the first valid path among:
 
@@ -117,7 +108,6 @@ Override the path with -c <PATH> or SIRUP_CONFIG=<PATH>; multiple paths can be p
 Every command and subcommand is documented through --help. The common flows:
 
 ```sh
-sirup configure                # discover an account and save it
 sirup start                    # serve every protocol the default account declares
 sirup start imap sieve         # ... only its imap and sieve blocks
 sirup start --account work     # ... for a named account

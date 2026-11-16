@@ -3,32 +3,37 @@
 //! Top-level clap parser and subcommand dispatcher, resolving the account
 //! a command runs against before it opens anything.
 
-use std::{
-    io::{IsTerminal, stdin},
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
 use pimalaya_cli::{
     clap::{
         args::{AccountFlag, JsonFlag, LogFlags},
-        commands::{CompletionCommand, JsonSchemaCommand, ManualCommand},
+        commands::{
+            completion::CompletionCommand, json_schema::JsonSchemaCommand, manual::ManualCommand,
+        },
         parsers::path_parser,
     },
     footer, long_version,
     printer::Printer,
-    prompt,
+    welcome::Welcome,
 };
-use pimalaya_config::{secret::SecretResolver, toml::TomlConfig};
+use pimalaya_config::{
+    secret::SecretResolver,
+    toml::{ConfigMissingError, TomlConfig},
+};
 
 use crate::{
     config::{AccountConfig, CONFIG_SAMPLE_URL, Config, ServerConfig},
     json_schema,
     protocol::Protocol,
     repl, session,
-    wizard::configure::{self, ConfigureCommand},
 };
+
+/// The sample configuration as a raw file, for `curl` to fetch.
+const SAMPLE_RAW_URL: &str =
+    "https://raw.githubusercontent.com/pimalaya/sirup/master/config.sample.toml";
 
 /// Top-level command-line interface parser.
 #[derive(Debug, Parser)]
@@ -36,9 +41,8 @@ use crate::{
 #[command(author, version, about)]
 #[command(long_about = concat!(
     "CLI to spawn pre-authenticated IMAP/SMTP/ManageSieve sessions and expose them via Unix sockets.\n\n",
-    "First time here? Run `sirup` with no command: it offers to generate an account ",
-    "discovered from your email address, which `sirup configure` does again later. ",
-    "Everything discovery does not cover is written by hand.",
+    "First time here? Run `sirup` with no command: it names the commands creating ",
+    "the configuration from the documented sample, which you then edit by hand.",
 ))]
 #[command(long_version = long_version!())]
 #[command(after_help = footer!())]
@@ -46,8 +50,8 @@ use crate::{
 pub struct Cli {
     /// The subcommand to run.
     ///
-    /// Omitted, a bare `sirup` offers to generate a configuration when it
-    /// finds none, and shows this help otherwise.
+    /// Omitted, a bare `sirup` welcomes a person finding no configuration,
+    /// and shows this help otherwise.
     #[command(subcommand)]
     pub cmd: Option<Command>,
     #[command(flatten)]
@@ -65,9 +69,6 @@ pub struct Cli {
 pub enum Command {
     Start(StartCommand),
     Repl(ReplCommand),
-    /// Configure an account interactively.
-    #[command(visible_alias = "wizard")]
-    Configure(ConfigureCommand),
     #[command(alias = "manuals")]
     Manual(ManualCommand),
     #[command(alias = "completions")]
@@ -140,7 +141,7 @@ impl Command {
     ) -> Result<()> {
         match self {
             Self::Start(cmd) => {
-                let (config, name, account) = resolve_account(printer, config_paths, account_name)?;
+                let (config, name, account) = resolve_account(config_paths, account_name)?;
                 let protocols = select_protocols(&account, &name, &cmd.protocols)?;
 
                 // NOTE: one resolver for the whole account, so a
@@ -164,14 +165,13 @@ impl Command {
             }
 
             Self::Repl(cmd) => {
-                let (config, name, account) = resolve_account(printer, config_paths, account_name)?;
+                let (config, name, account) = resolve_account(config_paths, account_name)?;
                 let protocol = select_protocol(&account, &name, cmd.protocol)?;
                 let server = account.server(protocol).expect("selected block exists");
 
                 repl::start(protocol, sock_path(&config, &name, protocol, server))
             }
 
-            Self::Configure(cmd) => cmd.execute(printer, config_paths),
             Self::Manual(cmd) => cmd.execute(printer, Cli::command()),
             Self::Completion(cmd) => cmd.execute(printer, Cli::command()),
             Self::JsonSchema(cmd) => cmd.execute(printer, json_schema::registry()),
@@ -274,85 +274,88 @@ fn join(protocols: &[Protocol]) -> String {
         .join(", ")
 }
 
-/// Welcomes, then offers to generate a first configuration, returning
-/// whether the wizard ran.
+/// Meets a bare `sirup`: a missing configuration fails, so `main` can
+/// welcome a person at a terminal, anything else gets the help.
 ///
-/// A hook rather than a gate: declining decides nothing, and what happens
-/// next is the business of the caller, a bare invocation or a command
-/// that needs an account.
-pub fn offer_configuration(
-    printer: &mut impl Printer,
-    config_paths: &[PathBuf],
-    path: &Path,
-) -> Result<bool> {
-    configure::print_welcome(path);
-
-    if !prompt::bool("Create a configuration with a default account?", true)? {
-        return Ok(false);
+/// A broken file counts as a configuration, its error left to the first
+/// command reading it.
+pub fn meet_bare_invocation(config_paths: &[PathBuf]) -> Result<()> {
+    if let Err(err) = Config::load(config_paths)
+        && err.is::<ConfigMissingError>()
+    {
+        return Err(err);
     }
 
-    ConfigureCommand.execute(printer, config_paths)?;
+    Cli::command().print_help()?;
+    Ok(())
+}
 
-    Ok(true)
+/// The welcome a person meets when no configuration exists at `path`:
+/// the commands creating it from `sample`, the shipped sample
+/// configuration, or downloading it without one, then `start`.
+pub fn welcome<'a>(
+    path: &'a Path,
+    config_paths: &'a [PathBuf],
+    sample: Option<&'a Path>,
+) -> Welcome<'a> {
+    Welcome {
+        bin: "sirup",
+        intro: "Welcome to Sirup, the CLI to share pre-authenticated IMAP, SMTP and ManageSieve sessions.",
+        path,
+        config_paths,
+        sample,
+        sample_url: SAMPLE_RAW_URL,
+        next: "Edit it, keep the account and the blocks you want, then open the sessions:",
+        command: "start",
+    }
 }
 
 /// Resolves the account a command runs against, returning the leftover
 /// global config, the account name and its config.
 ///
-/// A missing configuration is met with the wizard rather than an error,
-/// and the command carries on either way: accepting gives it a chance to
-/// work, declining leaves it to fail on the configuration it still has
-/// not got.
+/// A missing configuration fails with pimalaya-config's
+/// `ConfigMissingError`, which `main` meets with the welcome at a
+/// terminal. An unknown name lists the accounts the configuration holds,
+/// and a missing default names both ways of picking one.
 fn resolve_account(
-    printer: &mut impl Printer,
     config_paths: &[PathBuf],
     account_name: Option<&str>,
 ) -> Result<(Config, String, AccountConfig)> {
-    let mut config = match Config::from_paths_or_default(config_paths)? {
-        Some(config) => config,
-        None => {
-            // NOTE: the target path is where `-c` pointed, so a mistyped
-            // path shows up as itself rather than as a generic first run.
-            let path = Config::target_path(config_paths)?;
-
-            // NOTE: a script and a JSON consumer cannot answer a prompt,
-            // so both skip the offer and fail below.
-            if !printer.is_json() && stdin().is_terminal() {
-                offer_configuration(printer, config_paths, &path)?;
-            }
-
-            // NOTE: the wizard may print the account instead of writing
-            // it, so having run it proves nothing and the lookup runs
-            // again.
-            match Config::from_paths_or_default(config_paths)? {
-                Some(config) => config,
-                None => bail!(
-                    "No configuration found at {}, run `sirup configure` to generate one or write it by hand: {CONFIG_SAMPLE_URL}",
-                    path.display(),
-                ),
-            }
-        }
-    };
-
-    // NOTE: an empty name and `default` both mean the default account,
-    // which is the next block's business.
-    let named = account_name.filter(|name| !name.is_empty() && *name != "default");
-
-    if let Some(name) = named.filter(|name| !config.accounts.contains_key(*name)) {
-        let mut names: Vec<&str> = config.accounts.keys().map(String::as_str).collect();
-        names.sort_unstable();
-
-        bail!(
-            "Account `{name}` not found, the configuration holds: {}",
-            names.join(", "),
-        );
-    }
-
-    let Some((name, account_config)) = config.take_account(account_name)? else {
-        bail!(
-            "No default account found, name one with `-a <NAME>` or mark one with `default = true`"
-        );
-    };
+    let mut config = Config::load(config_paths)?;
+    let (name, account_config) = config.take_account(account_name)?;
 
     Ok((config, name, account_config))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use crate::cli::welcome;
+
+    #[test]
+    #[cfg(not(windows))]
+    fn the_welcome_downloads_the_raw_sample_then_starts() {
+        let paths = [PathBuf::from("/nonexistent/sirup/config.toml")];
+        let welcome = welcome(&paths[0], &paths, None).to_string();
+
+        let curl = "curl -sSL --create-dirs -o '/nonexistent/sirup/config.toml' \
+                    https://raw.githubusercontent.com/pimalaya/sirup/master/config.sample.toml";
+        assert!(welcome.contains(curl), "{welcome}");
+        let start = "\n  sirup -c '/nonexistent/sirup/config.toml' start\n";
+        assert!(welcome.contains(start), "{welcome}");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn the_welcome_copies_the_shipped_sample() {
+        let paths = [PathBuf::from("/nonexistent/sirup/config.toml")];
+        let sample = Path::new("/usr/share/doc/sirup/config.sample.toml");
+        let welcome = welcome(&paths[0], &paths, Some(sample)).to_string();
+
+        let copy = "install -m 644 '/usr/share/doc/sirup/config.sample.toml' \
+                    '/nonexistent/sirup/config.toml'";
+        assert!(welcome.contains(copy), "{welcome}");
+        assert!(!welcome.contains("curl"), "{welcome}");
+    }
 }

@@ -33,12 +33,12 @@ Sirup SHALL run as a long-lived daemon, one instance per account, so the cost of
 - THEN the `work` account is used
 
 ### Requirement: Commands resolve the account from config
-`start` and `repl` SHALL resolve their account from the loaded config by the global account name, or the `default = true` account when none is given. Each of the three ways that fails is a hard error naming what is missing, described under the configuration capability, and a missing configuration raises the wizard offer before it errors.
+`start` and `repl` SHALL resolve their account from the loaded config by the global account name, or the `default = true` account when none is given. Each way that fails is a hard error naming what is missing, described under the configuration capability, and a missing configuration meets a person with the welcome instead.
 
 #### Scenario: Missing config
 - GIVEN no config file on disk
 - WHEN `sirup start` runs
-- THEN the wizard is offered, and the command still fails naming the path it looked for when no configuration follows
+- THEN the command fails naming the path it looked for and the sample, the welcome standing in for the error at a terminal
 
 ### Requirement: `start` serves the protocols it is given, or all of them
 `start` SHALL take the protocols to serve as a positional list, defaulting to every block the account declares, and SHALL bind one socket per protocol served. A protocol asked for but not declared SHALL be refused naming the blocks the account does declare, rather than serving a silently shorter list.

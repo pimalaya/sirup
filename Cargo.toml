@@ -13,14 +13,14 @@ repository = "https://github.com/pimalaya/sirup"
 
 [features]
 default = ["rustls-ring", "scram", "imap", "smtp", "sieve"]
-imap = ["dep:io-imap", "dep:nom", "pimalaya-cli/imap"]
-smtp = ["dep:io-smtp", "pimalaya-cli/smtp"]
+imap = ["dep:io-imap"]
+smtp = ["dep:io-smtp"]
 sieve = ["dep:io-managesieve"]
 scram = ["io-imap?/scram", "io-smtp?/scram", "io-managesieve?/scram"]
-native-tls  = ["pimalaya-stream/native-tls", "io-pim-discovery/native-tls", "io-imap?/native-tls", "io-smtp?/native-tls", "io-managesieve?/native-tls"]
-rustls-aws  = ["pimalaya-stream/rustls-aws", "io-pim-discovery/rustls-aws", "io-imap?/rustls-aws", "io-smtp?/rustls-aws", "io-managesieve?/rustls-aws"]
-rustls-ring = ["pimalaya-stream/rustls-ring", "io-pim-discovery/rustls-ring", "io-imap?/rustls-ring", "io-smtp?/rustls-ring", "io-managesieve?/rustls-ring"]
-vendored = ["pimalaya-stream/vendored", "io-imap?/vendored", "io-smtp?/vendored", "io-managesieve?/vendored", "io-pim-discovery/vendored"]
+native-tls  = ["pimalaya-stream/native-tls", "io-imap?/native-tls", "io-smtp?/native-tls", "io-managesieve?/native-tls"]
+rustls-aws  = ["pimalaya-stream/rustls-aws", "io-imap?/rustls-aws", "io-smtp?/rustls-aws", "io-managesieve?/rustls-aws"]
+rustls-ring = ["pimalaya-stream/rustls-ring", "io-imap?/rustls-ring", "io-smtp?/rustls-ring", "io-managesieve?/rustls-ring"]
+vendored = ["pimalaya-stream/vendored", "io-imap?/vendored", "io-smtp?/vendored", "io-managesieve?/vendored"]
 
 [profile.release]
 lto = "fat"
@@ -29,26 +29,20 @@ strip = "symbols"
 panic = "abort"
 
 [build-dependencies]
-pimalaya-cli = { version = "0.2", default-features = false, features = ["build"] }
+pimalaya-cli = { version = "0.6", default-features = false, features = ["build"] }
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 dirs = "6"
-io-imap = { version = "0.6", default-features = false, features = ["client"], optional = true }
-# NOTE: imap-codec 2.0.0-alpha.9, under io-imap 0.6, uses nom's alloc parsers
-# without asking for the feature, which abnf-core 0.6.1 no longer turns on for
-# it. Never imported, this entry restores the feature until io-imap or
-# imap-codec releases its own fix.
-nom = { version = "7", default-features = false, features = ["alloc"], optional = true }
-io-managesieve = { version = "0.1", default-features = false, features = ["client"], optional = true }
-io-pim-discovery = { version = "0.7", default-features = false, features = ["pacc", "autoconfig", "rfc6186", "client"] }
-io-sasl = { version = "0.1", default-features = false, features = ["scram"] }
-io-smtp = { version = "0.3", default-features = false, features = ["client"], optional = true }
+io-imap = { version = "0.11", default-features = false, features = ["client"], optional = true }
+io-managesieve = { version = "0.4", default-features = false, features = ["client"], optional = true }
+io-sasl = { version = "0.2", default-features = false, features = ["scram"] }
+io-smtp = { version = "0.9", default-features = false, features = ["client"], optional = true }
 log = "0.4"
-pimalaya-cli = { version = "0.2", default-features = false, features = ["prompt", "spinner", "terminal", "wizard"] }
-pimalaya-config = { version = "0.2", default-features = false, features = ["toml", "secret"] }
-pimalaya-stream = { version = "0.3", default-features = false, features = ["std"] }
+pimalaya-cli = { version = "0.6", default-features = false, features = ["spinner", "terminal"] }
+pimalaya-config = { version = "0.5", default-features = false, features = ["toml", "secret"] }
+pimalaya-stream = { version = "0.4", default-features = false, features = ["std"] }
 schemars = "1"
 secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
@@ -60,6 +54,3 @@ toml = "1.1"
 
 [target.'cfg(windows)'.dependencies]
 uds_windows = "1"
-
-[patch.crates-io]
-pimalaya-cli = { git = "https://github.com/pimalaya/cli", rev = "55b66933950f02541892407667e5e0b254245871" }

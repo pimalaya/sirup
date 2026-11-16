@@ -7,10 +7,7 @@
 //! STARTTLS switch, ALPN override and SASL mechanism. This is the shape
 //! every other Pimalaya binary reads.
 //!
-//! The types derive both `Deserialize` (loading a config) and `Serialize`
-//! (the wizard rendering a ready-to-save fragment), so the
-//! `skip_serializing_if` predicates keep defaulted fields out of that
-//! fragment. [`parse_server`] validates a server URL against the protocol
+//! [`parse_server`] validates a server URL against the protocol
 //! whose block it was read from.
 //!
 //! Every path field is shell-expanded as it is deserialized, so no call
@@ -27,17 +24,16 @@ use io_sasl::{
 use log::warn;
 use pimalaya_config::{
     secret::{Secret, SecretResolver},
-    toml::{TomlConfig, shell_expanded_path},
+    toml::{TomlConfig, opt_shell_expanded_path, shell_expanded_path},
 };
-use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider};
-use serde::{Deserialize, Deserializer, Serialize};
+use pimalaya_stream::tls::{Rustls, RustlsCrypto, Tls, TlsProvider, TlsServer};
+use serde::Deserialize;
 use url::Url;
 
 use crate::protocol::Protocol;
 
-/// The documented sample every field is described in, named by the
-/// welcome and by each configuration failure as the way out that needs
-/// no wizard.
+/// The documented sample every field is described in, named by each
+/// configuration failure as the way out.
 pub const CONFIG_SAMPLE_URL: &str =
     "https://github.com/pimalaya/sirup/blob/master/config.sample.toml";
 
@@ -78,38 +74,36 @@ impl TomlConfig for Config {
         env!("CARGO_PKG_NAME")
     }
 
-    fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)> {
-        self.accounts.remove_entry(name)
+    fn sample_url() -> &'static str {
+        CONFIG_SAMPLE_URL
     }
 
-    fn take_default_account(&mut self) -> Option<(String, Self::Account)> {
-        let name = self
-            .accounts
+    fn accounts(&self) -> impl Iterator<Item = (&str, bool)> {
+        self.accounts
             .iter()
-            .find_map(|(name, account)| account.default.then(|| name.clone()))?;
+            .map(|(name, account)| (name.as_str(), account.default))
+    }
 
-        self.take_named_account(&name)
+    fn take_named_account(&mut self, name: &str) -> Option<(String, Self::Account)> {
+        self.accounts.remove_entry(name)
     }
 }
 
 /// One `[accounts.<name>]` block: a mailbox, and one server per protocol
 /// it speaks.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AccountConfig {
     /// Whether this account is used when a command runs without `-a`.
     /// Exactly one account should set it.
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub default: bool,
     /// The IMAP server, served on the account's `imap` socket.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub imap: Option<ServerConfig>,
     /// The SMTP submission server, served on the account's `smtp`
     /// socket.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub smtp: Option<ServerConfig>,
     /// The ManageSieve server, served on the account's `sieve` socket.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub sieve: Option<ServerConfig>,
 }
 
@@ -132,77 +126,11 @@ impl AccountConfig {
             .filter(|protocol| self.server(*protocol).is_some())
             .collect()
     }
-
-    /// Renders the account as an `[accounts.<name>]` TOML table, the
-    /// document the wizard saves, appends or prints.
-    ///
-    /// Borrowed rather than moved into a [`Config`], which would mean
-    /// cloning the account to render it. Serialized alphabetically the
-    /// blocks would interleave and each endpoint would sit under the
-    /// credentials qualifying it, so the lines are grouped by block and
-    /// each block opens on its server.
-    pub fn render(&self, name: &str) -> Result<String> {
-        #[derive(Serialize)]
-        struct AccountDocument<'a> {
-            accounts: HashMap<&'a str, &'a AccountConfig>,
-        }
-
-        let document = AccountDocument {
-            accounts: HashMap::from([(name, self)]),
-        };
-        let rendered = pimalaya_config::toml::to_string(&document)?;
-
-        let Some((header, body)) = rendered.split_once('\n') else {
-            return Ok(rendered);
-        };
-
-        let mut groups: Vec<(String, Vec<&str>)> = Vec::new();
-
-        for line in body.lines().filter(|line| !line.trim().is_empty()) {
-            let key = line.split(['.', ' ']).next().unwrap_or(line).to_string();
-
-            match groups.iter_mut().find(|(name, _)| *name == key) {
-                Some((_, lines)) => lines.push(line),
-                None => groups.push((key, vec![line])),
-            }
-        }
-
-        groups.sort_by_key(|(key, _)| {
-            RENDER_ORDER
-                .iter()
-                .position(|known| known == key)
-                .unwrap_or(RENDER_ORDER.len())
-        });
-
-        let mut document = format!("{header}\n");
-
-        for (index, (key, mut lines)) in groups.into_iter().enumerate() {
-            if index > 0 {
-                document.push('\n');
-            }
-
-            // NOTE: the endpoint is what the block is about, so it reads
-            // first, the credentials and the quirks qualifying it.
-            let server = format!("{key}.server ");
-            lines.sort_by_key(|line| !line.starts_with(&server));
-
-            for line in lines {
-                document.push_str(line);
-                document.push('\n');
-            }
-        }
-
-        Ok(document)
-    }
 }
-
-/// The order a rendered account's groups read in: the account's own
-/// switches, then one block per protocol.
-const RENDER_ORDER: [&str; 4] = ["default", "imap", "smtp", "sieve"];
 
 /// One protocol's server: where it is, how the connection is secured and
 /// who it authenticates as.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServerConfig {
     /// Server address, a bare authority or a full URL.
@@ -216,10 +144,9 @@ pub struct ServerConfig {
     /// Override for this protocol's socket path, replacing the
     /// `<socks_dir>/sirup/<account>-<protocol>.sock` default.
     #[serde(default, deserialize_with = "opt_shell_expanded_path")]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub sock_file: Option<PathBuf>,
     /// TLS provider and trust settings for the handshake.
-    #[serde(default, skip_serializing_if = "is_default_tls")]
+    #[serde(default)]
     pub tls: TlsConfig,
     /// Whether to upgrade a plaintext connection with STARTTLS. Only
     /// valid with the cleartext scheme (`imap://`, `smtp://`,
@@ -229,7 +156,6 @@ pub struct ServerConfig {
     /// server is upgraded, RFC 5804 defining that as the way to reach
     /// TLS on its single port; IMAP and SMTP have an implicit-TLS
     /// scheme of their own, so theirs stays off until asked for.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub starttls: Option<bool>,
     /// Whether a SASL mechanism disclosing a reusable credential may
     /// run over a connection that is still in the clear.
@@ -239,7 +165,7 @@ pub struct ServerConfig {
     /// this today, refusing them by default as RFC 5804 section 5 asks;
     /// the IMAP and SMTP sessions send what they are configured to
     /// send.
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default)]
     pub allow_cleartext_auth: bool,
     /// ALPN protocol identifiers offered during the TLS handshake.
     /// `None` (field omitted) takes the protocol's own: `["imap"]` for
@@ -247,11 +173,9 @@ pub struct ServerConfig {
     /// registers no identifier. `Some([])` disables ALPN entirely;
     /// `Some(["x"])` overrides with a custom list. Only relevant for the
     /// rustls provider; `native-tls` ignores ALPN.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub alpn: Option<Vec<String>>,
     /// The SASL mechanism and its credentials. Omit to skip
     /// authentication entirely.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub sasl: Option<SaslConfig>,
 }
 
@@ -321,30 +245,6 @@ impl ServerConfig {
     }
 }
 
-/// `skip_serializing_if` predicate for a `bool` field: skips it when
-/// `false`, so a wizard-generated fragment omits the off switches. The
-/// wizard is the only serializer of these types.
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
-/// Deserializes an optional path field, expanding it exactly as
-/// [`shell_expanded_path`] expands a required one.
-///
-/// pimalaya-config carries no optional twin yet, so the wrapper lives
-/// here until it does.
-fn opt_shell_expanded_path<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<PathBuf>, D::Error> {
-    shell_expanded_path(deserializer).map(Some)
-}
-
-/// `skip_serializing_if` predicate for the [`TlsConfig`] field: skips it
-/// when left at its default, so the fragment carries no empty TLS block.
-fn is_default_tls(tls: &TlsConfig) -> bool {
-    *tls == TlsConfig::default()
-}
-
 /// Parses a block's `server` string into a [`Url`], validating the
 /// scheme against the protocol the block was read from.
 ///
@@ -376,23 +276,21 @@ pub fn parse_server(server: &str, protocol: Protocol) -> Result<Url> {
 }
 
 /// TLS provider and trust settings for an account.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TlsConfig {
     /// TLS backend to use; defaults to the first available at runtime.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<TlsProviderConfig>,
     /// Rustls-specific settings, ignored by the native-tls provider.
     #[serde(default)]
     pub rustls: RustlsConfig,
     /// Extra root certificate to trust, PEM-encoded.
     #[serde(default, deserialize_with = "opt_shell_expanded_path")]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cert: Option<PathBuf>,
 }
 
 /// The selectable TLS backend.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum TlsProviderConfig {
     /// The Rustls pure-Rust stack.
@@ -402,16 +300,15 @@ pub enum TlsProviderConfig {
 }
 
 /// Rustls-specific settings.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RustlsConfig {
     /// Crypto backend for Rustls; defaults to the first available.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub crypto: Option<RustlsCryptoConfig>,
 }
 
 /// The selectable Rustls crypto backend.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RustlsCryptoConfig {
     /// The aws-lc-rs backend.
@@ -439,7 +336,8 @@ impl TlsConfig {
                 }),
                 alpn,
             },
-            cert: self.cert,
+            server: self.cert.map(|cert| TlsServer { cert }),
+            client: None,
         }
     }
 }
@@ -453,7 +351,7 @@ impl TlsConfig {
 /// `scram-sha-256` only works at runtime when the `scram` cargo feature
 /// is enabled (it propagates to `io-imap`/`io-smtp`); otherwise the
 /// upstream client returns `ScramSha256NotEnabled`.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum SaslConfig {
     /// The ANONYMOUS mechanism (RFC 4505), carrying only a trace token.
@@ -473,7 +371,7 @@ pub enum SaslConfig {
 }
 
 /// Credentials for the ANONYMOUS mechanism.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslAnonymousConfig {
     /// Optional trace token sent to the server.
@@ -481,7 +379,7 @@ pub struct SaslAnonymousConfig {
 }
 
 /// Credentials for the LOGIN mechanism.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslLoginConfig {
     /// The login name.
@@ -491,7 +389,7 @@ pub struct SaslLoginConfig {
 }
 
 /// Credentials for the PLAIN mechanism.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslPlainConfig {
     /// Optional authorization identity to act as.
@@ -505,7 +403,7 @@ pub struct SaslPlainConfig {
 }
 
 /// Credentials for the OAUTHBEARER mechanism.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslOauthbearerConfig {
     /// The account username.
@@ -515,7 +413,7 @@ pub struct SaslOauthbearerConfig {
 }
 
 /// Credentials for the XOAUTH2 mechanism.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslXoauth2Config {
     /// The account username.
@@ -525,7 +423,7 @@ pub struct SaslXoauth2Config {
 }
 
 /// Credentials for the SCRAM-SHA-256 mechanism.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SaslScramSha256Config {
     /// The login name.

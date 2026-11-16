@@ -6,10 +6,10 @@ status: current
 
 # Configuration
 
-Sirup reads a TOML document holding named accounts, from the first canonical path or the one `-c` overrides. Resolving an account is where a command discovers it has nothing to run against, and each of the three ways that fails names what is missing and what to do about it.
+Sirup reads a TOML document holding named accounts, from the first canonical path or the one `-c` overrides. Resolving an account is where a command discovers it has nothing to run against, and each way that fails names what is missing and what to do about it. Sirup writes no configuration: a person missing one is welcomed with the commands creating it from the documented sample.
 
 ### Requirement: A missing configuration names the path
-A command finding no configuration file SHALL name the path it looked for, which is the one `-c` gave or the default location, and SHALL name both `sirup configure` and the documented sample as the two ways out.
+A command finding no configuration file SHALL name the path it looked for, which is the one `-c` gave or the default location, and SHALL name the documented sample as the way out.
 
 #### Scenario: Mistyped `-c`
 - GIVEN `sirup -c /tmp/nope.toml start`
@@ -17,7 +17,7 @@ A command finding no configuration file SHALL name the path it looked for, which
 - THEN the error names /tmp/nope.toml, so the mistyped path shows up as itself rather than as a generic first run
 
 ### Requirement: An unknown account lists the ones that exist
-A command given an `-a` name the configuration does not hold SHALL list the account names it does hold, sorted.
+A command given an `-a` name the configuration does not hold SHALL list the account names it does hold, sorted. `default` is a name like any other: `-a default` takes the account named `default`, an absent or empty `-a` the one marked default.
 
 #### Scenario: Typo in `-a`
 - GIVEN a configuration holding `work` and `perso`
@@ -32,13 +32,26 @@ A command running without `-a` against a configuration where no account claims `
 - WHEN `sirup start` runs
 - THEN the error names `-a <NAME>` and `default = true`
 
-### Requirement: A missing configuration raises the offer first
-Before it errors, a command needing an account SHALL offer to generate a configuration when it finds none. The offer is a hook rather than a gate: the command carries on afterwards either way, so accepting gives it a chance to work and declining leaves it to fail on the configuration it still has not got.
+### Requirement: Several defaults are refused
+A command running without `-a` against a configuration where several accounts claim `default` SHALL fail naming them, rather than pick one.
 
-#### Scenario: First run of a command
-- GIVEN no configuration file on disk and a terminal on the standard input
+#### Scenario: Two defaults
+- GIVEN a configuration whose accounts `perso` and `work` both set `default = true`
 - WHEN `sirup start` runs
-- THEN the welcome is printed and the wizard is offered, and the command carries on with whatever configuration exists afterwards
+- THEN the error names `perso, work` and both ways of keeping one
+
+### Requirement: A person missing a configuration meets the welcome
+A bare `sirup`, or a command needing an account, finding no configuration file SHALL fail naming the path it looked for and the documented sample. When a person reads the output (no `--json`, stderr a terminal) it SHALL print pimalaya-cli's welcome instead: the commands creating the file from the shipped sample, or downloading it when none ships, then `sirup start`. Nothing offers to write a configuration.
+
+#### Scenario: First run at a terminal
+- GIVEN no configuration file on disk and a terminal on stderr
+- WHEN `sirup start` runs
+- THEN the welcome names the missing path, the command creating it from the sample and then `sirup start`, and the command exits 1
+
+#### Scenario: First run in a script
+- GIVEN no configuration file on disk and `--json`
+- WHEN `sirup --json start` runs
+- THEN the failure object names the missing path and the sample, and the command exits 1
 
 ### Requirement: Every path is shell-expanded at deserialize
 `socks-dir`, `sock-file` and `tls.cert` SHALL be expanded as they are deserialized, environment variables and the leading tilde alike, so no call site reads one as written and no new path field can forget to expand.
