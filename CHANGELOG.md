@@ -50,6 +50,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Fixed install.sh saving an HTTP error page as the archive and letting `tar` fail on it: it downloads with `curl -fsSLo` and stops on the error.
 - Bounded the idle keepalive NOOP with a read deadline, so an upstream that accepts the command and never answers ends the run instead of parking the daemon forever.
 - Shell-expanded `socks-dir`, `sock-file` and `tls.cert` when the configuration is read. A `~` or a `$VAR` in any of them used to be taken literally, so `socks-dir = "~/run"` bound the socket under a directory named `~`.
 - Stopped the IMAP `repl` spinning on `BAD Null command` when its standard input reaches end of file. It now exits, as the SMTP one already did.
