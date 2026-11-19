@@ -102,7 +102,7 @@ A `pimalaya-stream` stream retries a read or a write that reports it is not read
 - THEN the read hands back a not-ready failure at once, rather than being retried for a minute and then failing as a timeout
 
 ### Requirement: ManageSieve upstream session
-Sirup SHALL serve a third protocol, ManageSieve, behind a `sieve` cargo feature. The block's `server` SHALL accept `sieve://` for cleartext, `sieves://` for implicit TLS and a bare authority taking the former, alongside the IMAP and SMTP schemes. The upstream session SHALL be opened, TLS-negotiated and authenticated once by io-managesieve, exactly as the other two are by io-imap and io-smtp.
+Sirup SHALL serve a third protocol, ManageSieve, behind a `sieve` cargo feature. The block's `server` SHALL accept `sieve://` for cleartext, `sieves://` for implicit TLS and a bare authority taking the former, alongside the IMAP and SMTP schemes. The upstream session SHALL be opened, TLS-negotiated and authenticated once by io-managesieve, exactly as the other two are by io-imap and io-smtp. The `allow-cleartext-auth` key SHALL only exist in builds with the `sieve` feature, the ManageSieve session being the only one to read it; a build without it SHALL refuse the key as unknown.
 
 #### Scenario: ManageSieve client attaches
 - GIVEN a `sirup start` daemon that has authenticated an upstream ManageSieve session and bound its socket

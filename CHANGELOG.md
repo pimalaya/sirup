@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   RFC 5804 registers one port, 4190, and reaches TLS on it through STARTTLS, so a bare `sieve.server` authority takes `sieve://` and is upgraded rather than encrypted from the first byte, unlike the IMAP and SMTP blocks. `sieves://` is accepted for the deployments the specification does not define, listening for a handshake straight away.
 
-- Added `<block>.allow-cleartext-auth`, letting a SASL mechanism that discloses a reusable credential run over a connection still in the clear. It is off, RFC 5804 section 5 asking for the refusal, and only the ManageSieve session enforces it today.
+- Added `<block>.allow-cleartext-auth`, letting a SASL mechanism that discloses a reusable credential run over a connection still in the clear. It is off, RFC 5804 section 5 asking for the refusal, and only the ManageSieve session enforces it today, so the key exists only in builds with the `sieve` feature.
 - Added the `json-schema` command, describing the `--json` failure object.
 - Added the `--help` footer carrying the bug tracker and the sponsoring links.
 

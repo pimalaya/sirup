@@ -147,7 +147,8 @@ sieve.server = "sieve.example.com"
 # Whether a SASL mechanism disclosing a reusable credential (plain, login,
 # oauthbearer, xoauth2) may run over a connection still in the clear. RFC 5804
 # section 5 asks for the refusal, so it is off; scram-sha-256 and anonymous
-# disclose nothing and are unaffected. Only the ManageSieve session enforces it.
+# disclose nothing and are unaffected. Only the ManageSieve session enforces it,
+# and the key exists only in builds with the `sieve` feature.
 #sieve.allow-cleartext-auth = false
 
 # ManageSieve registers no ALPN identifier, so none is offered unless you name

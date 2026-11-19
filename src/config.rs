@@ -164,7 +164,8 @@ pub struct ServerConfig {
     /// something it can replay. Only the ManageSieve session enforces
     /// this today, refusing them by default as RFC 5804 section 5 asks;
     /// the IMAP and SMTP sessions send what they are configured to
-    /// send.
+    /// send. The key exists only in builds with the `sieve` feature.
+    #[cfg(feature = "sieve")]
     #[serde(default)]
     pub allow_cleartext_auth: bool,
     /// ALPN protocol identifiers offered during the TLS handshake.
@@ -192,6 +193,7 @@ pub struct Connection {
     /// Whether to upgrade the connection with STARTTLS.
     pub starttls: bool,
     /// Whether a credential-disclosing mechanism may run in the clear.
+    #[cfg(feature = "sieve")]
     pub allow_cleartext_auth: bool,
     /// The resolved SASL credentials, `None` to skip authentication.
     pub sasl: Option<Sasl>,
@@ -237,6 +239,7 @@ impl ServerConfig {
             starttls: self
                 .starttls
                 .unwrap_or_else(|| protocol.default_starttls(scheme)),
+            #[cfg(feature = "sieve")]
             allow_cleartext_auth: self.allow_cleartext_auth,
             url,
             tls,
@@ -580,6 +583,7 @@ sieve.server = "mail.example.com"
         assert!(connection.sasl.is_none());
     }
 
+    #[cfg(feature = "sieve")]
     #[test]
     fn a_bare_managesieve_authority_is_upgraded_rather_than_encrypted() {
         // NOTE: RFC 5804 registers one port and reaches TLS on it
