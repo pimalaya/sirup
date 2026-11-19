@@ -22,6 +22,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Changed the io-imap dependency to 0.12.
+- Changed the io-smtp dependency to 0.10.
+- Changed the io-sasl dependency to 0.3.
+- Changed the io-managesieve dependency to 0.5.
+- Changed the pimalaya-cli dependency to 0.7.0.
 - Changed the dependencies to pimalaya-cli 0.6.1 and pimalaya-config 0.6.0.
 
 - Bumped rustls to 0.23.46, domain to 0.12.3, ctutils to 0.4.6, rustls-webpki to 0.103.16 and webpki-root-certs to 1.0.11, fixing RUSTSEC-2026-0285, RUSTSEC-2026-0310, RUSTSEC-2026-0346 to RUSTSEC-2026-0349, RUSTSEC-2026-0382, RUSTSEC-2026-0383 and RUSTSEC-2026-0385.
