@@ -36,13 +36,13 @@ anyhow = "1"
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
 dirs = "6"
 io-imap = { version = "0.12", default-features = false, features = ["std"], optional = true }
-io-managesieve = { version = "0.5", default-features = false, features = ["client"], optional = true }
+io-managesieve = { version = "0.6", default-features = false, features = ["std"], optional = true }
 io-sasl = { version = "0.3", default-features = false, features = ["scram"] }
 io-smtp = { version = "0.10", default-features = false, features = ["std"], optional = true }
 log = "0.4"
 pimalaya-cli = { version = "0.7.0", default-features = false, features = ["spinner", "terminal"] }
 pimalaya-config = { version = "0.6.0", default-features = false, features = ["toml", "secret"] }
-pimalaya-stream = { version = "0.4", default-features = false, features = ["std"] }
+pimalaya-stream = { version = "0.4.1", default-features = false, features = ["std"] }
 schemars = "1"
 secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", default-features = false, features = ["alloc", "derive"] }

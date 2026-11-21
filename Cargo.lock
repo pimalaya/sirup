@@ -848,9 +848,9 @@ dependencies = [
 
 [[package]]
 name = "io-managesieve"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb20d3378c192962a59f2ada3c159ea9c925a456775a6b1ebd47b2ddebc87ac4"
+checksum = "6840834c87705b95aa4b1009c663fc0c08e4a89a7c6bcde33012d554842629d4"
 dependencies = [
  "anyhow",
  "base64",
@@ -865,9 +865,9 @@ dependencies = [
 
 [[package]]
 name = "io-proxy"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b8a1b3698a70ea041d11dea1532276cf270aa289388bce8c68b27d949eb3506"
+checksum = "08d43e8139aa88f8248928a607a60767b93fc4bebf1e1d36ce761554b7397b3c"
 dependencies = [
  "base64-codec",
  "log",
@@ -1298,9 +1298,9 @@ dependencies = [
 
 [[package]]
 name = "pimalaya-stream"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "314599e9b99dbd22c67c45704fafa0010c38ad000bea4c6ce555bd9d7ca05aab"
+checksum = "696292f67a3d82d113a279435d4cf6088c5cf2632e166662f28b91268d959e4a"
 dependencies = [
  "anyhow",
  "io-proxy",

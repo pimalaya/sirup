@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Changed the io-imap dependency to 0.12.
 - Changed the io-smtp dependency to 0.10.
 - Changed the io-sasl dependency to 0.3.
-- Changed the io-managesieve dependency to 0.5.
+- Changed the io-managesieve dependency to 0.6 and pimalaya-stream to 0.4.1.
 - Changed the pimalaya-cli dependency to 0.7.0.
 - Changed the dependencies to pimalaya-cli 0.6.1 and pimalaya-config 0.6.0.
 
